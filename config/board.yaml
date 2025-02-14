@@ -1,20 +1,17 @@
-Size:
-  width: 400
-  height: 400
-  cell_size: 50
+Size: 64
 
-Pieces:
+Pieces paths:
   white:
-    king: resources/images/pieces/pieces-basic/white-king.png
-    queen: resources/images/pieces/pieces-basic/white-queen.png
-    bishop: resources/images/pieces/pieces-basic/white-bishop.png
-    knight: resources/images/pieces/pieces-basic/white-knight.png
-    rook: resources/images/pieces/pieces-basic/white-rook.png
-    pawn: resources/images/pieces/pieces-basic/white-pawn.png
+    king: ./resources/images/pieces/pieces-basic-png/white-king.png
+    queen: resources/images/pieces/pieces-basic-png/white-queen.png
+    bishop: resources/images/pieces/pieces-basic-png/white-bishop.png
+    knight: resources/images/pieces/pieces-basic-png/white-knight.png
+    rook: resources/images/pieces/pieces-basic-png/white-rook.png
+    pawn: resources/images/pieces/pieces-basic-png/white-pawn.png
   black:
-    king: resources/images/pieces/pieces-basic/black-king.png
-    queen: resources/images/pieces/pieces-basic/black-queen.png
-    bishop: resources/images/pieces/pieces-basic/black-bishop.png
-    knight: resources/images/pieces/pieces-basic/black-knight.png
-    rook: resources/images/pieces/pieces-basic/black-rook.png
-    pawn: resources/images/pieces/pieces-basic/black-pawn.png
+    king: resources/images/pieces/pieces-basic-png/black-king.png
+    queen: resources/images/pieces/pieces-basic-png/black-queen.png
+    bishop: resources/images/pieces/pieces-basic-png/black-bishop.png
+    knight: resources/images/pieces/pieces-basic-png/black-knight.png
+    rook: resources/images/pieces/pieces-basic-png/black-rook.png
+    pawn: resources/images/pieces/pieces-basic-png/black-pawn.png
