@@ -40,12 +40,14 @@ class ChessUI:
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=color)
 
         #Dibujar las piezas
-        for piece_name in self.board.pieces.keys():
-            piece       = self.board.pieces[piece_name]
-            col, row    = self._translate_position_logic2px(piece.col, piece.row)
-            color       = 'white' if 'white' in piece_name else 'black'
-            key         = f'{color} {piece.type}'
-            self.canvas.create_image(col, row, image=self.pieces[key], anchor='nw')
+        for col in self.cols_str:
+            for row in range(1, 9):
+                response = self.board.what_in(col, row)
+                if 'Empty' in response:
+                    continue
+                #response = response.split(' ')
+                x, y = self._translate_position_logic2px(col, row)
+                self.canvas.create_image(x, y, image=self.pieces[response], anchor='nw')
 
     def _translate_position_logic2px(self, logic_col, logic_row):
         cols_int = {col:num for num, col in enumerate(self.cols_str)}
@@ -66,6 +68,7 @@ class ChessUI:
         row = row // self.cell_size
         
         logic_col = cols_str[col]
+
         if self.rotation:
             logic_row = row + 1
         else:
@@ -95,8 +98,9 @@ class ChessUI:
         logic_col, logic_row = self._translate_position_px2logic(event.x, event.y)
         if self.selected is None:
             # Selecciona la pieza a mover
-            self.selected = pos
+            self.selected = (logic_col, logic_row)
             print(logic_col, logic_row)
+            print(self.board.what_in(logic_col, logic_row))
         else:
             # Intenta mover la pieza desde self.selected hasta pos
             #moved = self.chess_board.move_piece(self.selected, pos)
@@ -111,5 +115,5 @@ class ChessUI:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = ChessUI(root, True)
+    app = ChessUI(root, False)
     root.mainloop()            
