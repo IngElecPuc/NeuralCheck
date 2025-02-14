@@ -37,29 +37,29 @@ class ChessUI:
                 self.canvas.create_rectangle(x1, y1, x2, y2, fill=color)
 
         #Dibujar las piezas
+        #pdb.set_trace()
         for piece_name in self.board.pieces.keys():
             piece       = self.board.pieces[piece_name]
             col, row    = self._translate_position(piece.col, piece.row)
             color       = 'white' if 'white' in piece_name else 'black'
-            key         = f'{color} {piece.ptype}'
+            key         = f'{color} {piece.type}'
             self.canvas.create_image(col, row, image=self.pieces[key], anchor='nw')
 
     def _translate_position(self, logic_col, logic_row):
-        
         cols_str = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] 
-        if self.rotation: #Sin tener en cuenta la rotación primero
-            cols_str = cols_str[::-1]
-        cols_int = {col:num for col, num in enumerate(cols_str)}
+        #if self.rotation: 
+        #    cols_str = cols_str[::-1]
+        cols_int = {col:num for num, col in enumerate(cols_str)}
         
         col = cols_int[logic_col] * self.cell_size
-        row = (logic_row - 1) * self.cell_size
+        row = (8 - logic_row) * self.cell_size
         
         return col, row
 
     def _load_pieces(self):
         def load_and_format(path):
-            image = Image.open(path)
-            image = image.resize((self.cell_size, self.cell_size), Image.ANTIALIAS)
+            image = Image.open(path).convert("RGBA")
+            image = image.resize((self.cell_size, self.cell_size), Image.Resampling.LANCZOS)
             return ImageTk.PhotoImage(image)
         
         images = {}

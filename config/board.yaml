@@ -2,7 +2,7 @@ Size: 64
 
 Pieces paths:
   white:
-    king: ./resources/images/pieces/pieces-basic-png/white-king.png
+    king: resources/images/pieces/pieces-basic-png/white-king.png
     queen: resources/images/pieces/pieces-basic-png/white-queen.png
     bishop: resources/images/pieces/pieces-basic-png/white-bishop.png
     knight: resources/images/pieces/pieces-basic-png/white-knight.png

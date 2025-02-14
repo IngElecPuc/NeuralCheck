@@ -1,3 +1,5 @@
+import pdb
+
 class ChessPiece:
     def __init__(self, ptype: str, col: str, row: int, white_player: bool):
         self.type = ptype
@@ -24,20 +26,20 @@ class ChessBoard:
         pieces['white queen']   = ChessPiece('queen', 'D', 1, True)
         pieces['white bishop1'] = ChessPiece('bishop', 'F', 1, True)
         pieces['white bishop2'] = ChessPiece('bishop', 'C', 1, True)
-        pieces['white knight1'] = ChessPiece('bishop', 'G', 1, True)
-        pieces['white knight2'] = ChessPiece('bishop', 'B', 1, True)
-        pieces['white rook1']   = ChessPiece('bishop', 'H', 1, True)
-        pieces['white rook2']   = ChessPiece('bishop', 'A', 1, True)
-        pieces['white king']    = ChessPiece('king', 'E', 8, False)
+        pieces['white knight1'] = ChessPiece('knight', 'G', 1, True)
+        pieces['white knight2'] = ChessPiece('knight', 'B', 1, True)
+        pieces['white rook1']   = ChessPiece('rook', 'H', 1, True)
+        pieces['white rook2']   = ChessPiece('rook', 'A', 1, True)
+        pieces['black king']    = ChessPiece('king', 'E', 8, False)
         pieces['black queen']   = ChessPiece('queen', 'D', 8, False)
         pieces['black bishop1'] = ChessPiece('bishop', 'F', 8, False)
         pieces['black bishop2'] = ChessPiece('bishop', 'C', 8, False)
-        pieces['black knight1'] = ChessPiece('bishop', 'G', 8, False)
-        pieces['black knight2'] = ChessPiece('bishop', 'B', 8, False)
-        pieces['black rook1']   = ChessPiece('bishop', 'H', 8, False)
-        pieces['black rook2']   = ChessPiece('bishop', 'A', 8, False)
+        pieces['black knight1'] = ChessPiece('knight', 'G', 8, False)
+        pieces['black knight2'] = ChessPiece('knight', 'B', 8, False)
+        pieces['black rook1']   = ChessPiece('rook', 'H', 8, False)
+        pieces['black rook2']   = ChessPiece('rook', 'A', 8, False)
         
-        for col, i in enumerate(cols):
+        for i, col in enumerate(cols):
             pieces[f'white pawn{i+1}'] = ChessPiece('pawn', col, 2, True)
             pieces[f'black pawn{i+1}'] = ChessPiece('pawn', col, 7, False)
 
