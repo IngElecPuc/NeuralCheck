@@ -171,13 +171,13 @@ class ChessBoard:
 
         movs    = pos + pmm
         mask    = np.all((movs >= 0) & (movs <= 7), axis=1) #Se eliminan movimientos que acaben fuera del tablero
+        movs    = movs[mask]
         #TODO Falta chequear si los movimientos terminan sobre una pieza y qué tipo de pieza es
         #TODO Falta chequear los movimientos de proyección en línea: reina, alfil, torre
         #TODO Faltan chequear movimientos especiales:
         #   -Captura al paso
         #   -Enroque
 
-        movs = movs[mask]
         npos = [''] * len(movs)
         for i, (x, y) in enumerate(movs):
             npos[i] = self.array2logic(x, y)
@@ -194,9 +194,37 @@ class ChessBoard:
             self.put('Empty square', initial_position)
             self.put(piece, end_position)
             #TODO Agregar promoción de peones
+            turn = self.transcribe(piece, initial_position, end_position)
+            self.last_turn = turn
+            if self.white_turn:
+                self.history.append([turn])
+            else:
+                self.history[-1].append(turn)
+            self.white_turn = not self.white_turn
             return True
         else:
             return False
+        
+    def transcribe(self, piece, initial_position, end_position):
+        movement = ''
+        if piece == 'knight':
+            movement = 'N'
+        elif piece == 'pawn':
+            pass
+        else:
+            movement = piece[0].upper() 
+
+        #TODO capura
+        #TODO enroque corto
+        #TODO enroque largo
+        #TODO jate
+        #TODO mate
+        #TODO promoción
+        #TODO desambigüación de dos piezas que pueden ir a una misma casilla
+
+        return movement + initial_position.lower()
+        
+        
 
 if __name__ == '__main__':
     board = ChessBoard()
