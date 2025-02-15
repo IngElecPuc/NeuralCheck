@@ -70,28 +70,29 @@ class ChessBoard:
         board = [row]*8
         self.board = np.array(board, dtype=np.int64)
 
-        self.put('white', 'king', 'E', 1)
-        self.put('white', 'queen', 'D', 1)
-        self.put('white', 'bishop', 'F', 1)
-        self.put('white', 'bishop', 'C', 1)
-        self.put('white', 'knight', 'G', 1)
-        self.put('white', 'knight', 'B', 1)
-        self.put('white', 'rook', 'H', 1)
-        self.put('white', 'rook', 'A', 1)
-        self.put('black', 'king', 'E', 8)
-        self.put('black', 'queen', 'D', 8)
-        self.put('black', 'bishop', 'F', 8)
-        self.put('black', 'bishop', 'C', 8)
-        self.put('black', 'knight', 'G', 8)
-        self.put('black', 'knight', 'B', 8)
-        self.put('black', 'rook', 'H', 8)
-        self.put('black', 'rook', 'A', 8)
+        self.put('white', 'king', 'E1')
+        self.put('white', 'queen', 'D1')
+        self.put('white', 'bishop', 'F1')
+        self.put('white', 'bishop', 'C1')
+        self.put('white', 'knight', 'G1')
+        self.put('white', 'knight', 'B1')
+        self.put('white', 'rook', 'H1')
+        self.put('white', 'rook', 'A1')
+        self.put('black', 'king', 'E8')
+        self.put('black', 'queen', 'D8')
+        self.put('black', 'bishop', 'F8')
+        self.put('black', 'bishop', 'C8')
+        self.put('black', 'knight', 'G8')
+        self.put('black', 'knight', 'B8')
+        self.put('black', 'rook', 'H8')
+        self.put('black', 'rook', 'A8')
         
         for i, col in enumerate(self._cols_str):
-            self.put('white', 'pawn', col, 2)
-            self.put('black', 'pawn', col, 7)
+            self.put('white', 'pawn', f'{col}2')
+            self.put('black', 'pawn', f'{col}7')
     
-    def logic2array(self, col, row): #Convertir esto después a Numpy arrays
+    def logic2array(self, position): #Convertir esto después a Numpy arrays
+        col, row = position[0], int(position[1])
         x = 8 - row
         y = self._cols2int[col]
         return x, y
@@ -99,9 +100,9 @@ class ChessBoard:
     def array2logic(self, x, y): #Convertir esto después a Numpy arrays
         col = self._int2cols[y]
         row = x - 8        
-        return col, row
+        return f'{col}{row}'
 
-    def put(self, color, piece, col, row):
+    def put(self, color, piece, position):
         """
         Pone piezas en el tablero utilizando coordenadas del juego
             Piece map:
@@ -114,11 +115,11 @@ class ChessBoard:
             queen -> 5
             king -> 6
         """
-        x, y = self.logic2array(col, row) #Ojo con la notación cuando esto se convierta a numpy arrays
+        x, y = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
         self.board[x, y] = self.name2num[piece] * (1 if color == 'white' else -1)
 
-    def what_in(self, col, row):
-        x, y = self.logic2array(col, row) #Ojo con la notación cuando esto se convierta a numpy arrays
+    def what_in(self, position):
+        x, y = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
         piece = self.board[x, y]
         color = 'white' if piece > 0 else 'black'
         name = self.num2name[np.abs(piece)]
@@ -137,14 +138,14 @@ class ChessBoard:
     def print(self):
         print(np.array(board))
 
-    def allowed_movements(self, color, piece, col, row):
+    def allowed_movements(self, piece, position):
         """
         Retorna una lista con los movimientos legales que tiene la pieza. 
         """
         
-        x, y    = self.logic2array(col, row) #Ojo con la notación cuando esto se convierta a numpy arrays
+        x, y    = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
         pos     = np.array([x, y])
-        movs    = pos + self.movemnts_matrices[f'{color} {piece}']
+        movs    = pos + self.movemnts_matrices[piece]
         mask    = np.all((movs >= 0) & (movs <= 7), axis=1) #Se eliminan movimientos que acaben fuera del tablero
         #Falta chequear si los movimientos terminan sobre una pieza y qué tipo de pieza es
         #Falta chequear los movimientos de proyección en línea: reina, alfil, torre
