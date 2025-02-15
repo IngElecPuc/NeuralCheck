@@ -14,6 +14,10 @@ class ChessBoard:
             for col in range(8):
                 self.board_colors[row, col] = (col + row) % 2
 
+        self.white_turn = True
+        self.history = []
+        self.last_turn = ''
+
     def _initialize_resources(self):
         """
         Inicializa una serie de listas, arrays y diccionarios para no calcularlos después
@@ -38,7 +42,7 @@ class ChessBoard:
         rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[-a,0] for a in np.arange(1,8)])))
         rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[0,a] for a in np.arange(1,8)])))
         rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[0,-a] for a in np.arange(1,8)])))
-        queen_movement_matrix   = np.concatenate((rook_movement_matrix, rook_movement_matrix))
+        queen_movement_matrix   = np.concatenate((bishop_movement_matrix, rook_movement_matrix))
         knight_movement_matrix  = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]])
         king_movement_matrix   = np.column_stack((-king_movement_matrix[:, 1], king_movement_matrix[:, 0])) #Convirtiendo de lógica cartesiana a notación numpy: fila = (n - 1) - y; columna = x
         queen_movement_matrix  = np.column_stack((-queen_movement_matrix[:, 1], queen_movement_matrix[:, 0]))
@@ -70,39 +74,39 @@ class ChessBoard:
         board = [row]*8
         self.board = np.array(board, dtype=np.int64)
 
-        self.put('white', 'king', 'E1')
-        self.put('white', 'queen', 'D1')
-        self.put('white', 'bishop', 'F1')
-        self.put('white', 'bishop', 'C1')
-        self.put('white', 'knight', 'G1')
-        self.put('white', 'knight', 'B1')
-        self.put('white', 'rook', 'H1')
-        self.put('white', 'rook', 'A1')
-        self.put('black', 'king', 'E8')
-        self.put('black', 'queen', 'D8')
-        self.put('black', 'bishop', 'F8')
-        self.put('black', 'bishop', 'C8')
-        self.put('black', 'knight', 'G8')
-        self.put('black', 'knight', 'B8')
-        self.put('black', 'rook', 'H8')
-        self.put('black', 'rook', 'A8')
+        self.put('white king', 'E1')
+        self.put('white queen', 'D1')
+        self.put('white bishop', 'F1')
+        self.put('white bishop', 'C1')
+        self.put('white knight', 'G1')
+        self.put('white knight', 'B1')
+        self.put('white rook', 'H1')
+        self.put('white rook', 'A1')
+        self.put('black king', 'E8')
+        self.put('black queen', 'D8')
+        self.put('black bishop', 'F8')
+        self.put('black bishop', 'C8')
+        self.put('black knight', 'G8')
+        self.put('black knight', 'B8')
+        self.put('black rook', 'H8')
+        self.put('black rook', 'A8')
         
         for i, col in enumerate(self._cols_str):
-            self.put('white', 'pawn', f'{col}2')
-            self.put('black', 'pawn', f'{col}7')
+            self.put('white pawn', f'{col}2')
+            self.put('black pawn', f'{col}7')
     
-    def logic2array(self, position): #Convertir esto después a Numpy arrays
+    def logic2array(self, position): #TODO Convertir esto después a Numpy arrays
         col, row = position[0], int(position[1])
         x = 8 - row
         y = self._cols2int[col]
         return x, y
     
-    def array2logic(self, x, y): #Convertir esto después a Numpy arrays
+    def array2logic(self, x, y): #TODO Convertir esto después a Numpy arrays
         col = self._int2cols[y]
-        row = x - 8        
+        row = 8 - x
         return f'{col}{row}'
 
-    def put(self, color, piece, position):
+    def put(self, piece, position):
         """
         Pone piezas en el tablero utilizando coordenadas del juego
             Piece map:
@@ -115,8 +119,16 @@ class ChessBoard:
             queen -> 5
             king -> 6
         """
+        
         x, y = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
-        self.board[x, y] = self.name2num[piece] * (1 if color == 'white' else -1)
+        
+        if 'Empty' not in piece:
+            piece = piece.split(' ')
+            color = piece[0]
+            piece = piece[1]
+            self.board[x, y] = self.name2num[piece] * (1 if color == 'white' else -1)
+        else:
+            self.board[x, y] = self.name2num[piece]
 
     def what_in(self, position):
         x, y = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
@@ -142,15 +154,49 @@ class ChessBoard:
         """
         Retorna una lista con los movimientos legales que tiene la pieza. 
         """
+        if 'black' in piece and self.white_turn:
+            return []
+        if 'white' in piece and not self.white_turn:
+            return []
         
         x, y    = self.logic2array(position) #Ojo con la notación cuando esto se convierta a numpy arrays
         pos     = np.array([x, y])
-        movs    = pos + self.movemnts_matrices[piece]
-        mask    = np.all((movs >= 0) & (movs <= 7), axis=1) #Se eliminan movimientos que acaben fuera del tablero
-        #Falta chequear si los movimientos terminan sobre una pieza y qué tipo de pieza es
-        #Falta chequear los movimientos de proyección en línea: reina, alfil, torre
+        pmm     = self.movemnts_matrices[piece]
+        
+        if 'pawn' in piece: #Movimiento especial de la primera fila de los peones
+            if self.white_turn and x == 6:
+                pmm = np.concatenate((pmm, np.array([[-2, 0]])))
+            if not self.white_turn and x == 1:
+                pmm = np.concatenate((pmm, np.array([[2, 0]])))
 
-        return movs[mask]
+        movs    = pos + pmm
+        mask    = np.all((movs >= 0) & (movs <= 7), axis=1) #Se eliminan movimientos que acaben fuera del tablero
+        #TODO Falta chequear si los movimientos terminan sobre una pieza y qué tipo de pieza es
+        #TODO Falta chequear los movimientos de proyección en línea: reina, alfil, torre
+        #TODO Faltan chequear movimientos especiales:
+        #   -Captura al paso
+        #   -Enroque
+
+        movs = movs[mask]
+        npos = [''] * len(movs)
+        for i, (x, y) in enumerate(movs):
+            npos[i] = self.array2logic(x, y)
+
+        return npos
+
+    def move(self, piece, initial_position, end_position):
+        legal_movements = self.allowed_movements(piece, initial_position)
+        
+        xi, yi = self.logic2array(initial_position)
+        xe, ye = self.logic2array(end_position)
+        
+        if end_position in legal_movements:
+            self.put('Empty square', initial_position)
+            self.put(piece, end_position)
+            #TODO Agregar promoción de peones
+            return True
+        else:
+            return False
 
 if __name__ == '__main__':
     board = ChessBoard()

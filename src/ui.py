@@ -118,31 +118,28 @@ class ChessUI:
 
     def on_click(self, event):
         # Determina la casilla clickeada y maneja la selección/movimiento
-        position = self._translate_position_px2logic(event.x, event.y)
-        #pdb.set_trace()
-
+        target_position = self._translate_position_px2logic(event.x, event.y)
+        
         if self.selected is None:
             # Selecciona la pieza a mover
-            piece = self.board.what_in(position)
+            piece = self.board.what_in(target_position)
             if not 'Empty' in piece:
-                self.selected = (position, piece)
+                self.selected = (target_position, piece)
                 self.canvas.delete("all")
                 self.draw_board()
         else:
             piece_position, piece = self.selected
-            #movements 
-            # Intenta mover la pieza desde self.selected hasta pos
-            #moved = self.chess_board.move_piece(self.selected, pos)
-            #if moved:
-            #    print("Movimiento realizado de", self.selected, "a", pos)
-                # Redibuja el tablero para reflejar el nuevo estado
-            #    self.canvas.delete("all")
-            #    self.draw_board()
-            #else:
-            #    print("Movimiento inválido")
             self.selected = None
-            self.canvas.delete("all")
-            self.draw_board()
+            if piece_position != target_position:
+                moved = self.board.move(piece, piece_position, target_position)
+                if moved:
+                    self.canvas.delete("all")
+                    self.draw_board() #Agregar nueva posición
+                else:
+                    print("Movimiento inválido")
+            else: #Desseleccion
+                self.canvas.delete("all")
+                self.draw_board()
 
 if __name__ == "__main__":
     root = tk.Tk()
