@@ -6,7 +6,10 @@
 #include <string.h>
 #include <stdint.h>
 
-static void* visualize(int64_t bitboard);
-static int64_t getBitboardPosition(char position[]);
+void visualize(int64_t bitboard);
+int64_t getBitboardPosition(char position[]);
+
+static PyObject* pyVisualize(PyObject *self, PyObject *args);
+static PyObject* pyGetBitboardPosition(PyObject *self, PyObject *args);
 
 #endif // BITBOARD_EXTENSION

@@ -1,6 +1,6 @@
 #include "bitboard.h"
 
-static void visualize(int64_t bitboard)
+void visualize(int64_t bitboard)
 {
     uint64_t unum = (uint64_t) bitboard; // Conversion to uint64_t to handle unsigned bits.
     int bits = sizeof(unum) * 8; // 64 bits
@@ -9,12 +9,12 @@ static void visualize(int64_t bitboard)
     {    
         putchar((unum & (1ULL << i)) ? '1' : '0'); // Prints '1' or '0' depending on whether bit i is active
         if (i % 8 == 0)
-            putchar(' ');
+            putchar('\n');
     }
     putchar('\n');
 }
 
-static int64_t getBitboardPosition(char position[])
+int64_t getBitboardPosition(const char *position)
 {
     char cols2int[] = "hgfedcba";
     char rows2int[] = "12345678";
