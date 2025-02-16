@@ -137,7 +137,7 @@ class ChessUI:
                     self.draw_board() #Agregar nueva posición
                 else:
                     print("Movimiento inválido")
-            else: #Desseleccion
+            else: #Deseleccion
                 self.canvas.delete("all")
                 self.draw_board()
 
