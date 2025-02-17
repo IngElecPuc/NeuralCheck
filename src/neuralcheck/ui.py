@@ -139,9 +139,4 @@ class ChessUI:
                     print("Movimiento inválido")
             else: #Deseleccion
                 self.canvas.delete("all")
-                self.draw_board()
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = ChessUI(root, False)
-    root.mainloop()            
+                self.draw_board()                

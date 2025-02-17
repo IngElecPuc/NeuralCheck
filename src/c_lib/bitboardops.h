@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 void visualize(int64_t bitboard);
-int64_t getBitboardPosition(char position[]);
+int64_t getBitboardPosition(const char *position);
 
 static PyObject* pyVisualize(PyObject *self, PyObject *args);
 static PyObject* pyGetBitboardPosition(PyObject *self, PyObject *args);

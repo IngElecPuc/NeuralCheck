@@ -28,12 +28,12 @@ static PyObject* pyGetBitboardPosition(PyObject *self, PyObject *args) {
 
 static struct PyModuleDef bitboard_module = {
     PyModuleDef_HEAD_INIT,
-    "bitboard",            // Module name
+    "bitboardops",            // Module name
     "Bit-level board management module",  // Module documentation
     -1,                    // Global state size (always -1 in simple modules)
     MiExtensionMethods
 };
 
-PyMODINIT_FUNC PyInit_bitboard(void) { 
+PyMODINIT_FUNC PyInit_bitboardops(void) { 
     return PyModule_Create(&bitboard_module);
 }

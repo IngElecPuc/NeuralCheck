@@ -1,6 +1,6 @@
 venv/
 resources/
 src/__pycache__/
-bitboard.egg-info/
+bitboardops.egg-info/
 build/
 dist/
