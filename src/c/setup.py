@@ -2,7 +2,7 @@ from setuptools import setup, Extension
 
 module = Extension(
     "bitboard", 
-    sources=['src/bitboard.c', 'src/py_bitboard.c']  # Ambos archivos se compilan juntos
+    sources=['src/bitboardops.c', 'src/py_bitboardops.c']  # Ambos archivos se compilan juntos
 )
 
 setup(

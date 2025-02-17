@@ -1,4 +1,4 @@
-#include "bitboard.h"
+#include "bitboardops.h"
 
 // Definition of the module's methods
 static PyMethodDef MiExtensionMethods[] = {

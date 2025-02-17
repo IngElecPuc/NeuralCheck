@@ -1,4 +1,5 @@
 import numpy as np
+import bitboardops as bb
 
 class ChessPiece:
     def __init__(self, ptype: str, position: str, whiteplayer: bool):
@@ -64,7 +65,7 @@ class ChessBitboard:
                           ['rook', ['a1', 'a8']], 
                           ['rook', ['h1', 'h8']]]
         self.pieces     = [] #Representación para ML y para seguir track de las piezas
-        
+
         for (ptype, (p1, p2)) in init_positions:
             self.pieces.append(ChessPiece(ptype, p1, True))
             self.pieces.append(ChessPiece(ptype, p2, False))

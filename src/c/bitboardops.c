@@ -1,4 +1,4 @@
-#include "bitboard.h"
+#include "bitboardops.h"
 
 void visualize(int64_t bitboard)
 {
