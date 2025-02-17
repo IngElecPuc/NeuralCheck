@@ -6,3 +6,4 @@ build/
 dist/
 src/neuralcheck/__pycache__/
 src/neuralcheck/utils/__pycache__/
+test/__pycache__/

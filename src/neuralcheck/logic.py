@@ -14,7 +14,7 @@ class ChessBoard:
         self.white_turn = True
         self.history = []
         self.last_turn = ''
-        self.bitboard = ChessBitboard(1)
+        self.bitboard = ChessBitboard()
 
     def _initialize_resources(self):
         """

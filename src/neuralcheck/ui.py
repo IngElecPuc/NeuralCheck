@@ -25,6 +25,20 @@ class ChessUI:
         self.draw_board()
         self.canvas.bind("<Button-1>", self.on_click)
 
+        #Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
+        self.entry = tk.Entry(master, width=40)
+        self.entry.pack(pady=10)
+        self.label = tk.Label(master, text="Texto enviado: ", font=("Arial", 12))
+        self.label.pack(pady=10)
+        self.entry.bind("<Return>", self.enviar_texto)
+
+    def enviar_texto(self, event): #Borrar en el futuro
+            texto = self.entry.get().strip()  # Evitar entradas vacías
+            if texto:
+                self.board.bitboard.move(texto, self.board.white_turn)
+                self.label.config(text=f"Texto enviado: {texto}")
+                self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
+
     def draw_board(self):
         """
         Draw a 8x8 board with alternating colors
@@ -139,4 +153,4 @@ class ChessUI:
                     print("Movimiento inválido")
             else: #Deseleccion
                 self.canvas.delete("all")
-                self.draw_board()                
+                self.draw_board()              
