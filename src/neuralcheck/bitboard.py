@@ -1,11 +1,13 @@
 import numpy as np
 import bitboardops as bb
+import re
+import pdb
 
 class ChessPiece:
-    def __init__(self, ptype: str, position: str, whiteplayer: bool):
+    def __init__(self, ptype: str, position: str, white_player_turn: bool):
         self.ptype = ptype
         self.position = position
-        self.whiteplayer = whiteplayer
+        self.white_player_turn = white_player_turn
 
     def value(self):
         values = {
@@ -30,6 +32,15 @@ class ChessBitboard:
         self.pawns = 71776119061282560
         self.white = 65535
         self.black = 18446462598732840960
+        self.pieces = {
+            'K' : self.kings,
+            'Q' : self.queens,
+            'B' : self.bishops,
+            'N' : self.knights,
+            'R' : self.rooks,
+            'P' : self.pawns,
+        }
+
         """
         bitboard_blancas = 0b0000000000000000000000000000000000000000000000001111111100000000
         print(f"{bitboard_blancas:064b}")
@@ -56,6 +67,8 @@ class ChessBitboard:
         self._cols_str  = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         self._cols2int  = {col:num for num, col in enumerate(self._cols_str[::-1])}
         self._int2cols  = {num:col for num, col in enumerate(self._cols_str[::-1])}
+        
+        """
         init_positions  = [['king', ['e1', 'e8']], 
                           ['queen', ['d1', 'd8']], 
                           ['bishop', ['c1', 'c8']], 
@@ -73,6 +86,13 @@ class ChessBitboard:
         for col in self._cols_str:
             self.pieces.append(ChessPiece('pawn', f'{col}2', True))
             self.pieces.append(ChessPiece('pawn', f'{col}1', False))
+        """
+
+        self.positional_masks = {}
+        for col in self._cols_str:
+            for row in range(1,8):
+                position = f'{col}{row}'
+                self.positional_masks[position] = self.get_bitboard_position(position) #Se utilizan tanto que mejor traducirlas directo a diccionario
 
     def visualize(self, num):
         bitnum = f'{num:064b}'
@@ -83,14 +103,67 @@ class ChessBitboard:
         col, row = position[0], position[1]
         col = self._cols2int[col]
         row = int(row) - 1
-        return 1 << col << row * 8
+        return 1 << col + row * 8
 
     #def check_piece_type(self, bitmap: int):
     #    if bitmap & self.kings > 0:
 
-    def move(self, source: str, target: str):
-        source_bitmap = self.get_bitboard_position(source)
-        target_bitmap = self.get_bitboard_position(target)
+    def active_positions(self, bitmap): #Chequear un método más rápido que retorne algo parecido
+        candidates = []
+        for col in self._cols_str:
+            for row in range(1,8):
+                mask = self.get_bitboard_position(f'{col}{row}')
+                if mask & bitmap > 0:
+                    candidates.append(f'{col}{row}')
+
+        return candidates
+
+    def reverse_move(self, ptype:str, source:str, target:str): 
+        """
+        Responde a la pregunta, qué pieza se pudo mover a target desde source, ptype indica el tipo de pieza y por lo tanto la forma de moverse
+        """
+        pass
+
+    def move(self, order: str, white_player_turn:bool):
+        
+        target_pattern = r"[a-h][1-8]"
+        piece_pattern = R"[KQBNRO]" #Con O encuentra un enroque
+        
+        target = re.findall(target_pattern, order)
+        assert len(target) >= 1, "Error de notación, destino no encontrado"
+        if len(target) == 0: #¿Enroque?
+            pass
+        target = target[0]
+
+        pieces = re.findall(piece_pattern, order)
+        assert len(target) >= 1, "Error de notación, pieza de inicio no encontrada"
+        if len(pieces) == 0: #Se asume peones
+            pieces = self.pieces['P']
+            firstrow = 65280 if white_player_turn else 71776119061217280 #Máscara de los peones en primera fila
+        else:
+            pieces = self.pieces[pieces[0]]
+        pdb.set_trace()
+        player = self.white if white_player_turn else self.black
+
+        capture = 'x' in order
+
+        target_bitmap = self.get_bitboard_position(target) #A esta altura debe esar bien filtrado de la orden, pero hay que revisar por los casos raros de desamgibüación
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        #Falta responder la pregunta, ¿cuál es la pieza que puede llegar a target_bitmap?
+        candidates = self.active_positions(target_bitmap)
+        real_options = []
+        for candidate in candidates:
+            
+            source_bitmap = self.get_bitboard_position('e2')
 
         if source_bitmap & self.kings > 0:
             pass
@@ -107,3 +180,16 @@ class ChessBitboard:
             pass
         else:
             return None
+
+"""
+from neuralcheck.logic import *
+from neuralcheck.utils.class_explorer import Explorer
+explorer = Explorer()
+board = ChessBoard()
+import yaml
+with open('test/games.yaml') as file:
+ games = yaml.safe_load(file)
+
+board.bitboard.move(games['game1'][0][0], True)
+
+"""

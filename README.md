@@ -23,6 +23,7 @@ pip install -r requirements.txt
 
 # Estructura
 
+```
 NeuralCheck/
 ├── config/               # Archivos de configuración (board.yaml, config.yaml)
 ├── dist/                 # (Si generas paquetes distribuidos, esto es útil)
@@ -50,3 +51,4 @@ NeuralCheck/
 ├── .gitignore
 ├── README.md
 └── requirements.txt
+```

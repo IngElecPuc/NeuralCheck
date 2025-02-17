@@ -1,5 +1,7 @@
 import pdb
 import numpy as np
+import bitboardops as bb
+from neuralcheck.bitboard import ChessBitboard
 
 class ChessBoard:
     def __init__(self):
@@ -9,20 +11,16 @@ class ChessBoard:
         
         self._initialize_resources()
         self._initialize_pieces()
-        self.board_colors = np.zeros((8,8), dtype=np.int64)
-        for row in range(8):
-            for col in range(8):
-                self.board_colors[row, col] = (col + row) % 2
-
         self.white_turn = True
         self.history = []
         self.last_turn = ''
+        self.bitboard = ChessBitboard(1)
 
     def _initialize_resources(self):
         """
         Inicializa una serie de listas, arrays y diccionarios para no calcularlos después
         """
-        self._cols_str = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        self._cols_str = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         self._cols2int = {col:num for num, col in enumerate(self._cols_str)}
         self._int2cols = {num:col for num, col in enumerate(self._cols_str)}
         self._pieces = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king']
@@ -44,14 +42,14 @@ class ChessBoard:
         rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[0,-a] for a in np.arange(1,8)])))
         queen_movement_matrix   = np.concatenate((bishop_movement_matrix, rook_movement_matrix))
         knight_movement_matrix  = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]])
-        king_movement_matrix   = np.column_stack((-king_movement_matrix[:, 1], king_movement_matrix[:, 0])) #Convirtiendo de lógica cartesiana a notación numpy: fila = (n - 1) - y; columna = x
-        queen_movement_matrix  = np.column_stack((-queen_movement_matrix[:, 1], queen_movement_matrix[:, 0]))
-        bishop_movement_matrix = np.column_stack((-bishop_movement_matrix[:, 1], bishop_movement_matrix[:, 0]))
-        knight_movement_matrix = np.column_stack((-knight_movement_matrix[:, 1], knight_movement_matrix[:, 0]))
-        rook_movement_matrix   = np.column_stack((-rook_movement_matrix[:, 1], rook_movement_matrix[:, 0]))
-        wpawn_movement_matrix  = np.column_stack((-wpawn_movement_matrix[:, 1], wpawn_movement_matrix[:, 0]))
-        bpawn_movement_matrix  = np.column_stack((-bpawn_movement_matrix[:, 1], bpawn_movement_matrix[:, 0]))
-        self.movemnts_matrices = {
+        king_movement_matrix    = np.column_stack((-king_movement_matrix[:, 1], king_movement_matrix[:, 0])) #Convirtiendo de lógica cartesiana a notación numpy: fila = (n - 1) - y; columna = x
+        queen_movement_matrix   = np.column_stack((-queen_movement_matrix[:, 1], queen_movement_matrix[:, 0]))
+        bishop_movement_matrix  = np.column_stack((-bishop_movement_matrix[:, 1], bishop_movement_matrix[:, 0]))
+        knight_movement_matrix  = np.column_stack((-knight_movement_matrix[:, 1], knight_movement_matrix[:, 0]))
+        rook_movement_matrix    = np.column_stack((-rook_movement_matrix[:, 1], rook_movement_matrix[:, 0]))
+        wpawn_movement_matrix   = np.column_stack((-wpawn_movement_matrix[:, 1], wpawn_movement_matrix[:, 0]))
+        bpawn_movement_matrix   = np.column_stack((-bpawn_movement_matrix[:, 1], bpawn_movement_matrix[:, 0]))
+        self.movemnts_matrices  = {
             'white king': king_movement_matrix,
             'white queen': queen_movement_matrix,
             'white bishop': bishop_movement_matrix,
@@ -74,22 +72,22 @@ class ChessBoard:
         board = [row]*8
         self.board = np.array(board, dtype=np.int64)
 
-        self.put('white king', 'E1')
-        self.put('white queen', 'D1')
-        self.put('white bishop', 'F1')
-        self.put('white bishop', 'C1')
-        self.put('white knight', 'G1')
-        self.put('white knight', 'B1')
-        self.put('white rook', 'H1')
-        self.put('white rook', 'A1')
-        self.put('black king', 'E8')
-        self.put('black queen', 'D8')
-        self.put('black bishop', 'F8')
-        self.put('black bishop', 'C8')
-        self.put('black knight', 'G8')
-        self.put('black knight', 'B8')
-        self.put('black rook', 'H8')
-        self.put('black rook', 'A8')
+        self.put('white king', 'e1')
+        self.put('white queen', 'd1')
+        self.put('white bishop', 'f1')
+        self.put('white bishop', 'c1')
+        self.put('white knight', 'g1')
+        self.put('white knight', 'b1')
+        self.put('white rook', 'h1')
+        self.put('white rook', 'a1')
+        self.put('black king', 'e8')
+        self.put('black queen', 'd8')
+        self.put('black bishop', 'f8')
+        self.put('black bishop', 'c8')
+        self.put('black knight', 'g8')
+        self.put('black knight', 'b8')
+        self.put('black rook', 'h8')
+        self.put('black rook', 'a8')
         
         for i, col in enumerate(self._cols_str):
             self.put('white pawn', f'{col}2')
@@ -140,12 +138,6 @@ class ChessBoard:
             return f'Empty {color} square'
         else:
             return f'{color} {name}'
-
-    def is_white_square(self, col, row):
-        cols_str = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-        cols_int = {col:num for num, col in enumerate(cols_str)}
-
-        pass
 
     def print(self):
         print(np.array(board))

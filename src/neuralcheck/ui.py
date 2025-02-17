@@ -18,7 +18,7 @@ class ChessUI:
                                     height=self.cell_size * 8)
         self.canvas.pack()
         self.pieces     = self._load_pieces()
-        self.cols_str   = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] 
+        self.cols_str   = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         if self.rotation: 
             self.cols_str = self.cols_str[::-1]        
         self.selected   = None #To store selected box
