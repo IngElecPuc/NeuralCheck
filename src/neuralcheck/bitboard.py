@@ -3,7 +3,7 @@ import bitboardops as bb
 import re
 import pdb
 
-class ChessPiece:
+class ChessPiece: #FIXME esta clase no aporta mucho, borrar
     def __init__(self, ptype: str, position: str, white_player_turn: bool):
         self.ptype = ptype
         self.position = position
@@ -86,9 +86,12 @@ class ChessBitboard:
                 position = f'{col}{row}'
                 self.positional_masks[position] = self.get_bitboard_position(position) #Se utilizan tanto que mejor traducirlas directo a diccionario
 
-    def _initialize_pieces(self, board):
+    def _initialize_pieces(self, board:np.array) -> None:
         """
-        Infiere las máscaras bitboard de las piezas según la matriz de tablero board
+        Infer the bitboard masks of the pieces based on the board matrix.
+
+        Parameters:
+            board: a 8x8 int numpy array with maping as ChessBoard class
         """        
         kings   = 0
         queens  = 0
@@ -109,9 +112,9 @@ class ChessBitboard:
             white   = 0x000000000000FFFF
             black   = 0xFFFF000000000000
         else:
-            flatboard = board.reshape(-1)[::-1] #Se aplana y se invierte para iterar desde el bit menos significativo al más
-            for piece in range(-6, 7): #Representación numérica de piezas de ChessBoard
-                if piece == 0: #El cero es espacio vacío
+            flatboard = board.reshape(-1)[::-1] #Flatten and reverse to iterate from the least significant bit to the most
+            for piece in range(-6, 7): #Numerical representation of ChessBoard pieces
+                if piece == 0: #Zero represents an empty space
                     continue
                 detected = (flatboard == piece).astype(int)
                 bitboard = 0
@@ -147,27 +150,73 @@ class ChessBitboard:
             'black': black
         }
     
-    def visualize(self, num):
+    def visualize(self, num:int) -> None:
+        """
+        Displays an 8x8 ordered bit-like matrix that represents a 64-bit integer in binary.
+        The representation goes from left to right and top to bottom, following the most 
+        significant bit to the least.
+
+        Parameters:
+            num: A 64-bit integer representing a map or mask of the board.
+        """
         bitnum = f'{num:064b}'
         for i in range(8):
             print(bitnum[8*i:8*(i+1)])
 
-    def get_bitboard_position(self, position):
+    def get_bitboard_position(self, position:str) -> int:
+        """
+        Transforms a single chess-like position declaration to a 64-bit integer such as
+        that only one bit has a high value and maps exactly to the position desired
+
+        Parameters:
+            position: a string of size 2 with a character from a to h and a number from 1 to 8, e.g., 'e4'
+
+        Returns:
+            int: a bitboard number with the position encoded as one bit active
+        """
         col, row = position[0], position[1]
         col = self._cols2int[col]
         row = int(row) - 1
         return 1 << col + row * 8
 
-    def flip_vertical(self, bitboard):
+    def flip_vertical(self, bitboard: int) -> int:
         """
-        Gira el tablero para verlo como si fuera el turno de negro
+        Flips the bitboard vertically, transforming the board as if viewed from Black's perspective.
+
+        This operation mirrors the board along the horizontal axis, swapping ranks 
+        (e.g., the first rank becomes the eighth, the second becomes the seventh, etc.).
+        
+        Parameters:
+            bitboard: A 64-bit integer representing the board's bitboard.
+
+        Returns:
+            A 64-bit integer representing the vertically flipped bitboard.
         """
-        k1 = 0x00FF00FF00FF00FF
-        k2 = 0x0000FFFF0000FFFF
+        
+        k1 = 0x00FF00FF00FF00FF #k1 mask: selects every other byte (0x00FF00FF00FF00FF) to prepare for swapping adjacent bytes.
+        k2 = 0x0000FFFF0000FFFF #k2 mask: selects every other 16-bit word (0x0000FFFF0000FFFF) to prepare for swapping 16-bit groups.
+
+        # Step 1: Swap adjacent bytes.
+        # - (bitboard >> 8) shifts the board right by one byte; "& k1" selects bytes originally in odd positions.
+        # - (bitboard & k1) selects bytes originally in even positions; "<< 8" shifts them left by one byte.
+        # The OR operation combines these two parts, effectively swapping each pair of adjacent bytes.
         bitboard = ((bitboard >> 8) & k1) | ((bitboard & k1) << 8)
+
+        # Step 2: Swap adjacent 16-bit words.
+        # - (bitboard >> 16) shifts the board right by 16 bits; "& k2" selects the lower 16 bits of each 32-bit block.
+        # - (bitboard & k2) selects the lower 16 bits of each 32-bit block; "<< 16" shifts them left by 16 bits.
+        # This swaps the two-byte groups within each 32-bit half of the board.
         bitboard = ((bitboard >> 16) & k2) | ((bitboard & k2) << 16)
+
+        # Step 3: Swap the 32-bit halves.
+        # - (bitboard >> 32) moves the upper 32 bits to the lower 32-bit half.
+        # - (bitboard << 32) moves the lower 32 bits to the upper 32-bit half.
+        # The OR operation completes the reversal of all 8 bytes.
         bitboard = (bitboard >> 32) | (bitboard << 32)
+
+        # Return the final 64-bit result, ensuring no overflow beyond 64 bits.
         return bitboard & 0xFFFFFFFFFFFFFFFF
+
 
     def active_positions(self, bitmap): #Chequear un método más rápido que retorne algo parecido
         candidates = []
@@ -179,59 +228,77 @@ class ChessBitboard:
 
         return candidates
 
-    def print_hex(self, num):
+    def print_hex(self, num:int) -> None:
+        """
+        Prints the number in hexadecimal format
+
+        Parameters:
+            num: an 64-bit integer
+        """
         print(f"{num:#018x}".upper())
 
-    def reverse_move(self, ptype:str, source:str, target:str): 
+    def move(self, order: str, white_player_turn: bool) -> None:
         """
-        Responde a la pregunta, qué pieza se pudo mover a target desde source, ptype indica el tipo de pieza y por lo tanto la forma de moverse
-        """
-        pass
+        Processes a move order in algebraic notation (e.g., "Nf6") and updates the board bitboards accordingly.
 
-    def move(self, order: str, white_player_turn:bool):
+        The function:
+        - Extracts the target square from the order.
+        - Determines the piece type (defaulting to Pawn if no letter is present).
+        - Finds candidate source squares for the piece that can reach the target square.
+        - (Later) updates internal bitboards to remove the piece from its source and place it at the target.
+
+        Note:
+        - Board flipping is used for Black's turn so that move generation can be implemented from a "white perspective".
+        - Debug code and candidate evaluation for move disambiguation are present and will be removed or refactored later.
         
-        target_pattern = r"[a-h][1-8]"
-        piece_pattern = R"[KQBNRO]" #Con O encuentra un enroque
-        whole_board = self.white | self.black
+        Parameters:
+        order (str): The move in algebraic notation.
+        white_player_turn (bool): True if it's White's turn; False otherwise.
+        """
+
         
-        target = re.findall(target_pattern, order)
-        assert len(target) >= 1, "Error de notación, destino no encontrado"
-        if len(target) == 0: #¿Enroque?
+        target_pattern = r"[a-h][1-8]" #Pattern to extract the target square (e.g., "f6").
+        piece_pattern = r"[KQBNRO]" #Pattern to extract the piece type letter. (Note: 'O' indicates castling.)
+        whole_board = self.white | self.black # Bitboard for all pieces on the board.
+        
+        target_matches = re.findall(target_pattern, order) #Extract the target square from the order.
+        assert len(target_matches ) >= 1, "Notation error: target square not found."
+        if len(target_matches) == 0: #If no target square is found, it might be a castling move (not handled yet).
             pass
-        target = target[0]
+        target_square  = target_matches[0]
 
-        ptype = re.findall(piece_pattern, order)
-        assert len(target) >= 1, "Error de notación, pieza de inicio no encontrada"
-        if len(ptype) == 0: #Se asume peones
-            ptype = 'P'
-            firstrow = 0X000000000000FF00 if white_player_turn else 0X00FF000000000000 #Máscara de los peones en primera fila
+        piece_matches = re.findall(piece_pattern, order) # Extract the piece type from the order.
+        if not piece_matches:
+            ptype = 'P' #No piece letter found, so assume the move is by a pawn.
+            #For pawn moves, define the starting rank mask.
+            #For white, pawns start on rank 2. For Black, the board will be flipped later.
+            first_row = 0x000000000000FF00  
         else:
-            ptype = ptype[0]
+            ptype = piece_matches[0] #For non-pawn moves, first_row is not used.
             
-        pieces = self.masks[ptype]
-        
-        player = self.masks['white'] if white_player_turn else self.masks['black']
+            
+        pieces = self.masks[ptype] #Retrieve the bitboard for pieces of this type.
+        player = self.masks['white'] if white_player_turn else self.masks['black'] #Retrieve the bitboard for the current player's pieces.
 
-        capture = 'x' in order
+        capture = 'x' in order #Determine if the move is a capture.
 
-        target_bitmap = self.get_bitboard_position(target) #A esta altura debe esar bien filtrado de la orden, pero hay que revisar por los casos raros de desamgibüación
+        target_bitmap = self.get_bitboard_position(target_square) #Get the bitboard corresponding to the target square.
+        #FIXME A esta altura debe esar bien el filtrado de la orden, pero hay que revisar por los casos raros de desamgibüación
         
-        if not white_player_turn: #Se gira el tablero para evitar hacer dos sets de revisiones: uno por cada jugador
+        if not white_player_turn: #Flip the board for Black's turn so that move logic can be written from a white perspective.
             pieces          = self.flip_vertical(pieces)
             player          = self.flip_vertical(player)
             target_bitmap   = self.flip_vertical(target_bitmap)
-        
-        """
-        Más tarde implementar lógica de movimiento en funciones para cada pieza o esto va a crecer descontroladamente
-        """
-        pieces = pieces & player #Ojo con esto, revisar si está bien más adelante
-        source_bitmap = 0
+
+        #TODO Más tarde implementar lógica de movimiento en funciones para cada pieza o esto va a crecer descontroladamente
+        pieces = pieces & player #Limit the candidate pieces to those belonging to the current player.
+        source_bitmap = 0 #This variable will hold the bitmask of the source square of the moving piece.
 
         #La lógica aplica llevando las piezas a la posición objetivo. Si hay calce, la pieza se selecciona haciendo el movimiento inverso desde la posición objetivo
         if ptype == 'K': #Lógica de movimiento para el rey
             #TODO agregar enroque corto
             #TODO agregar enroque largo
-            #TODO chequar que no esté el otro rey en el espacio
+            #TODO chequar que no esté el otro rey en el espacio a llegar o se tratará de un movimiento ilegal
             for i in range(-1,2):
                 for j in range(-1,2):
                     if i == 0 and j == 0:
@@ -265,6 +332,7 @@ class ChessBitboard:
             pass
         else: #Lógica de movimiento para los peones. TODO #Chequear desambigüación
             #TODO agregar captura al paso
+            #TODO agregar coronación
             if ((pieces & firstrow) << 16) & target_bitmap > 0 and whole_board & target_bitmap == 0: #Si hay peones en la primera fila que alcanzan la posición con un avance doble (y no hay piezas en la posición objetivo)
                 source_bitmap = target_bitmap >> 16 #Me devuelvo y encuentro el peón que generó el avance
             elif ((pieces & firstrow) << 8) & target_bitmap > 0 and whole_board & target_bitmap == 0: #Si hay peones alcanzan la posición con un avance normal (y no hay piezas en la posición objetivo)
