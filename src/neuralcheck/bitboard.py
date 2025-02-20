@@ -150,18 +150,23 @@ class ChessBitboard:
             'black': black
         }
     
-    def visualize(self, num:int) -> None:
+    def visualize(self, num:int, coords:bool=False) -> None:
         """
         Displays an 8x8 ordered bit-like matrix that represents a 64-bit integer in binary.
         The representation goes from left to right and top to bottom, following the most 
         significant bit to the least.
 
         Parameters:
-            num: A 64-bit integer representing a map or mask of the board.
+            num: A 64-bit integer representing a map or mask of the board
+            coords: an optional parameter that allows to print the coordinates
         """
+        all_cols = ''
         bitnum = f'{num:064b}'
         for i in range(8):
-            print(bitnum[8*i:8*(i+1)])
+            print(f"{bitnum[8*i:8*(i+1)]}{8-i if coords else ''}")
+            all_cols += self._cols_str[i]
+        if coords:
+            print(all_cols)
 
     def get_bitboard_position(self, position:str) -> int:
         """
@@ -190,9 +195,9 @@ class ChessBitboard:
             bitboard: A 64-bit integer representing the board's bitboard.
 
         Returns:
-            A 64-bit integer representing the vertically flipped bitboard.
+            int: A 64-bit integer representing the vertically flipped bitboard.
         """
-        
+        # BUG Only doing flip across the horizontal simetry axis, check if this is the desire behaviour -> falta hacer un flip horizontal
         k1 = 0x00FF00FF00FF00FF #k1 mask: selects every other byte (0x00FF00FF00FF00FF) to prepare for swapping adjacent bytes.
         k2 = 0x0000FFFF0000FFFF #k2 mask: selects every other 16-bit word (0x0000FFFF0000FFFF) to prepare for swapping 16-bit groups.
 
@@ -216,7 +221,6 @@ class ChessBitboard:
 
         # Return the final 64-bit result, ensuring no overflow beyond 64 bits.
         return bitboard & 0xFFFFFFFFFFFFFFFF
-
 
     def active_positions(self, bitmap): #Chequear un método más rápido que retorne algo parecido
         candidates = []
@@ -259,7 +263,7 @@ class ChessBitboard:
         
         target_pattern = r"[a-h][1-8]" #Pattern to extract the target square (e.g., "f6").
         piece_pattern = r"[KQBNRO]" #Pattern to extract the piece type letter. (Note: 'O' indicates castling.)
-        whole_board = self.white | self.black # Bitboard for all pieces on the board.
+        whole_board = self.masks['white'] | self.masks['black'] # Bitboard for all pieces on the board.
         
         target_matches = re.findall(target_pattern, order) #Extract the target square from the order.
         assert len(target_matches ) >= 1, "Notation error: target square not found."
@@ -269,16 +273,17 @@ class ChessBitboard:
 
         piece_matches = re.findall(piece_pattern, order) # Extract the piece type from the order.
         if not piece_matches:
-            ptype = 'P' #No piece letter found, so assume the move is by a pawn.
+            pieces_key = 'P' #No piece letter found, so assume the move is by a pawn.
             #For pawn moves, define the starting rank mask.
             #For white, pawns start on rank 2. For Black, the board will be flipped later.
             first_row = 0x000000000000FF00  
         else:
-            ptype = piece_matches[0] #For non-pawn moves, first_row is not used.
-            
-            
-        pieces = self.masks[ptype] #Retrieve the bitboard for pieces of this type.
-        player = self.masks['white'] if white_player_turn else self.masks['black'] #Retrieve the bitboard for the current player's pieces.
+            pieces_key = piece_matches[0] #For non-pawn moves, first_row is not used.
+
+        player_key = 'white' if white_player_turn else 'black'
+        
+        pieces_value = self.masks[pieces_key] #Retrieve the bitboard for pieces of this type.
+        player_value = self.masks[player_key] #Retrieve the bitboard for the current player's pieces.
 
         capture = 'x' in order #Determine if the move is a capture.
 
@@ -286,69 +291,80 @@ class ChessBitboard:
         #FIXME A esta altura debe esar bien el filtrado de la orden, pero hay que revisar por los casos raros de desamgibüación
         
         if not white_player_turn: #Flip the board for Black's turn so that move logic can be written from a white perspective.
-            pieces          = self.flip_vertical(pieces)
-            player          = self.flip_vertical(player)
+            pieces_value    = self.flip_vertical(pieces_value)
+            player_value    = self.flip_vertical(player_value)
             target_bitmap   = self.flip_vertical(target_bitmap)
 
         #TODO Más tarde implementar lógica de movimiento en funciones para cada pieza o esto va a crecer descontroladamente
-        pieces = pieces & player #Limit the candidate pieces to those belonging to the current player.
+        pieces = pieces_value & player_value #Limit the candidate pieces to those belonging to the current player.
         source_bitmap = 0 #This variable will hold the bitmask of the source square of the moving piece.
 
         #La lógica aplica llevando las piezas a la posición objetivo. Si hay calce, la pieza se selecciona haciendo el movimiento inverso desde la posición objetivo
-        if ptype == 'K': #Lógica de movimiento para el rey
+        if pieces_key == 'K': #King move logic. Evaluate all king moves (one square in any direction).
             #TODO agregar enroque corto
             #TODO agregar enroque largo
             #TODO chequar que no esté el otro rey en el espacio a llegar o se tratará de un movimiento ilegal
-            for i in range(-1,2):
-                for j in range(-1,2):
-                    if i == 0 and j == 0:
-                        continue
-                    if (pieces << i + 8*j) & target_bitmap > 0: 
-                        source_bitmap = target_bitmap >> i + 8*j
+            #BUG King teleport
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0:
+                        continue # Skip no movement.
+                    shift = dx + 8 * dy                
+                    if shift > 0: #Handle positive and negative shifts separately.
+                        if (pieces << shift) & target_bitmap: # Shift the candidate pieces to see if one can reach the target.
+                            source_bitmap = target_bitmap >> shift
+                    elif shift < 0:
+                        if (pieces >> (-shift)) & target_bitmap:
+                            source_bitmap = target_bitmap << (-shift)
+        elif pieces_key == 'Q': #Queen move logic
             pass
-        elif ptype == 'Q': #Lógica de movimiento para la reina
+        elif pieces_key == 'B': #Bishop move logic
             pass
-        elif ptype == 'B': #Lógica de movimiento para los alfiles
-            pass
-        elif ptype == 'N': #Lógica de movimiento para los caballos. TODO #Chequear desambigüación            
+        elif pieces_key == 'N': # Knight move logic
+            #TODO Chequear desambigüación            
             #TODO iterar acá, e ir agregando los resultados a una lista, luego evaluar si hay más de una que sea no nula para desambigüar
-            if (pieces << 8 - 2) & target_bitmap > 0: 
-                source_bitmap = target_bitmap >> 8 - 2
-            if (pieces << 16 - 1) & target_bitmap > 0: 
-                source_bitmap = target_bitmap >> 16 - 1
-            if (pieces << 16 + 1) & target_bitmap > 0: 
-                source_bitmap = target_bitmap >> 16 + 1
-            if (pieces << 8 - 2) & target_bitmap > 0: 
-                source_bitmap = target_bitmap >> 8 + 2
-            if (pieces >> 8 - 2) & target_bitmap > 0: 
-                source_bitmap = target_bitmap << 8 - 2
-            if (pieces >> 16 - 1) & target_bitmap > 0: 
-                source_bitmap = target_bitmap << 16 - 1
-            if (pieces >> 16 + 1) & target_bitmap > 0: 
-                source_bitmap = target_bitmap << 16 + 1
-            if (pieces >> 8 - 2) & target_bitmap > 0: 
-                source_bitmap = target_bitmap << 8 + 2
-        elif ptype == 'R': #Lógica de movimiento para las torres
+            #BUG Not erasing original black knight
+            #BUG Chequear Ng3, Nd4, Ng5 -> Se crean piezas que no existen
+            knight_offsets = [17, 15, 10, 6, -17, -15, -10, -6]
+            for offset in knight_offsets:
+                if offset > 0:
+                    if (pieces << offset) & target_bitmap:
+                        source_bitmap = target_bitmap >> offset
+                elif offset < 0:
+                    if (pieces >> (-offset)) & target_bitmap:
+                        source_bitmap = target_bitmap << (-offset)
+            
+        elif pieces_key == 'R': # Rook move logic
             pass
-        else: #Lógica de movimiento para los peones. TODO #Chequear desambigüación
+        else: #Lógica de movimiento para los peones. TODO #Chequear desambigüación. Además, evaluar si quitar el else pues si no obliga a mover peones incluso si la orden está mal dada
             #TODO agregar captura al paso
             #TODO agregar coronación
-            if ((pieces & firstrow) << 16) & target_bitmap > 0 and whole_board & target_bitmap == 0: #Si hay peones en la primera fila que alcanzan la posición con un avance doble (y no hay piezas en la posición objetivo)
-                source_bitmap = target_bitmap >> 16 #Me devuelvo y encuentro el peón que generó el avance
-            elif ((pieces & firstrow) << 8) & target_bitmap > 0 and whole_board & target_bitmap == 0: #Si hay peones alcanzan la posición con un avance normal (y no hay piezas en la posición objetivo)
+            #BUG Self capture e4, d3, d3 (captura desde c2 a e3)           
+            #NOTE: For pawn moves, shifting left simulates moving forward (after board flip for Black).
+            #Pawn advance and capture moves.
+            #Note: For pawn moves, shifting left simulates moving forward (after board flip for Black).
+            if ((pieces & first_row) << 16) & target_bitmap and not (whole_board & target_bitmap): #Double advance move (from starting rank) if target square is empty.
+                source_bitmap = target_bitmap >> 16
+            elif ((pieces & first_row) << 8) & target_bitmap and not (whole_board & target_bitmap): #Single advance move.
                 source_bitmap = target_bitmap >> 8
-            elif ((pieces & firstrow) << 9) & target_bitmap > 0 and whole_board & target_bitmap == 1: #Si hay peones alcanzan la posición comiendo a la izquierda (y hay piezas en la posición objetivo -> posible captura)
+            elif ((pieces & first_row) << 9) & target_bitmap and (whole_board & target_bitmap): #Capture move to the left.
                 source_bitmap = target_bitmap >> 9
-            elif ((pieces & firstrow) << 7) & target_bitmap > 0 and whole_board & target_bitmap == 1: #Si hay peones alcanzan la posición comiendo a la derecha (y hay piezas en la posición objetivo -> posible captura)
-                source_bitmap = target_bitmap >> 7 
+            elif ((pieces & first_row) << 7) & target_bitmap and (whole_board & target_bitmap): # Capture move to the right.
+                source_bitmap = target_bitmap >> 7
             else:
-                source_bitmap = 0 #No se encontró ningún peón que cumpla
-            #    if 
-            
+                source_bitmap = 0  # No matching pawn move found.
+
+        #BUG carga un source_bitmap incluso para posiciones inválidas por lo que si llego y aplico esto se cambia el tablero. Con posiciones inválidas source_bitmap debe ser cero     
+        self.masks[pieces_key] = self.masks[pieces_key] ^ source_bitmap #Eliminate piece from initial position
+        self.masks[player_key] = self.masks[player_key] ^ source_bitmap #Eliminate piece from initial position
+        self.masks[pieces_key] = self.masks[pieces_key] ^ target_bitmap #Add piece to objective position
+        self.masks[player_key] = self.masks[player_key] ^ target_bitmap #Add piece to objective position
+
+    """
             #pdb.set_trace()
             print(self.visualize(pieces))
             print(self.visualize(player))
-            print(self.visualize(firstrow))
+            print(self.visualize(first_row))
             print(self.visualize(target_bitmap))
             pass        
                 
@@ -359,6 +375,37 @@ class ChessBitboard:
         for candidate in candidates:
             
             source_bitmap = self.get_bitboard_position('e2')
+    """
+    
+
+"""
+Sugerencias
+Suggestions & Observations
+Assertion Bug:
+The second assertion uses assert len(target) >= 1 when checking for a piece. It should be removed or adjusted since if no piece letter is found, you default to a Pawn.
+
+Negative Shifts:
+Shifting by a negative number isn’t allowed. In your King (and Knight) move logic, you now separate the cases for positive and negative shifts. Consider abstracting this pattern into a helper function.
+
+Knight Move Logic:
+Instead of writing eight similar if statements, define a list of knight offsets (as shown) and loop through them. This not only reduces code repetition but also makes it easier to maintain.
+
+Pawn Movement Conditions:
+For pawn captures, note that testing whole_board & target_bitmap == 1 is not reliable since target_bitmap is a bit mask (not necessarily equal to 1). I changed these conditions to simply check if the target is occupied (non-zero).
+
+Board Flipping and Pawn Start Row:
+When flipping the board for Black’s turn, update the pawn starting mask (first_row) so that your move generation logic works uniformly for both sides.
+
+Disambiguation and Candidate Moves:
+The current logic for candidate evaluation (i.e. self.active_positions(target_bitmap) and the loop afterward) is a placeholder. In the future, consider collecting all candidate source squares and then applying disambiguation logic if more than one candidate is found.
+
+Modularization:
+As noted in the comments, you might want to refactor the move generation for each piece into its own function. This will help keep the move function manageable.
+
+Operator Precedence:
+Be mindful of operator precedence when using shifts with arithmetic (e.g., pieces << (i + 8*j)). Using explicit parentheses (as done above) helps avoid ambiguity.
+
+"""
 
 
 
