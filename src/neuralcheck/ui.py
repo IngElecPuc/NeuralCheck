@@ -1,7 +1,7 @@
 import tkinter as tk
 import yaml
 from PIL import Image, ImageTk, ImageOps
-from logic import ChessBoard
+from neuralcheck.logic import ChessBoard
 from typing import Tuple, Dict
 import pdb
 
@@ -15,36 +15,89 @@ class ChessUI:
     def __init__(self, master, rotation):
         with open('config/board.yaml', 'r') as file: 
             self.config = yaml.safe_load(file)
-        self.cell_size  = self.config['Size']
+        self.cell_size  = self.config['Size']['square']
 
         self.master     = master
         self.rotation   = rotation #False if White's view, True for Black's view
-        self.board      = ChessBoard()
-        self.canvas     = tk.Canvas(master, 
+        self.logicboard = ChessBoard()
+
+        master.geometry(f"{self.config['Size']['width']}x{self.config['Size']['height']}")
+        master.rowconfigure(0, weight=1)
+        master.columnconfigure(0, weight=1)
+        
+        self.main_frame = tk.Frame(master) #Principal frame for the board
+        self.main_frame.grid(row=0, column=0, sticky="nsew")
+        self.main_frame.rowconfigure(0, weight=1)
+        self.main_frame.columnconfigure(0, weight=1)
+        self.main_frame.columnconfigure(1, weight=1)
+        
+        #Off board for drawing captured pieces and clock
+        self.offboard   = tk.Canvas(self.main_frame, 
+                                    width=self.cell_size * 3,
+                                    height=self.cell_size * 8)
+        self.offboard.grid(row=0, column=0)
+        
+        #Chess grafic board
+        self.board      = tk.Canvas(self.main_frame, 
                                     width=self.cell_size * 8, 
                                     height=self.cell_size * 8)
-        self.canvas.pack()
+        self.board.grid(row=0, column=1) 
+        
+        #Text Widget for history plays
+        self.history_moves = []  # Para guardar las jugadas, en lugar de self.history['history']
+        self.history_text = tk.Text(self.main_frame, width=20, height=20, wrap=tk.WORD)
+        self.history_text.grid(row=0, column=2, sticky="ns", padx=10)
+        self.history_scrollbar = tk.Scrollbar(self.main_frame, command=self.history_text.yview)
+        self.history_scrollbar.grid(row=0, column=3, sticky="ns")
+        self.history_text.config(yscrollcommand=self.history_scrollbar.set)
+        
         self.pieces     = self._load_pieces()
         self.cols_str   = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         if self.rotation: 
             self.cols_str = self.cols_str[::-1]        
         self.selected   = None #To store selected box
         self.draw_board()
-        self.canvas.bind("<Button-1>", self.on_click)
+        self.board.bind("<Button-1>", self.on_click)
 
-        #FIXME Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
+        #HACK Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
         self.entry = tk.Entry(master, width=40)
-        self.entry.pack(pady=10)
+        self.entry.grid(row=1, column=0, columnspan=2, pady=10)
         self.label = tk.Label(master, text="Texto enviado: ", font=("Arial", 12))
-        self.label.pack(pady=10)
+        self.label.grid(row=2, column=0, columnspan=2, pady=10)
         self.entry.bind("<Return>", self.send_text)
 
-    def send_text(self, event): #FIXME Borrar en el futuro
+    def send_text(self, event): #HACK Borrar en el futuro
             texto = self.entry.get().strip()  # Evitar entradas vacías
             if texto:
-                self.board.bitboard.move(texto, self.board.white_turn)
+                self.logicboard.bitboard.move(texto, self.logicboard.white_turn)
                 self.label.config(text=f"Texto enviado: {texto}")
                 self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
+
+    def add_move(self, move: str) -> None:
+        """
+        Adds a move to the history displayed in the text widget.
+
+        Parameters: 
+            move: the move text to add
+        """
+
+        if self.logicboard.white_turn: #For white's turn initiate a new line, for black's add to the end
+            self.history_moves.append([move])
+        else:
+            if self.history_moves:
+                self.history_moves[-1].append(move)
+            else:
+                self.history_moves.append(["", move]) 
+        
+        self.history_text.delete("1.0", tk.END) #Delete and redraw all
+        for turn, moves in enumerate(self.history_moves):
+            if len(moves) == 1:
+                white_move = moves[0]
+                black_move = ""
+            else:
+                white_move, black_move = moves
+            self.history_text.insert(tk.END, f"{turn+1}\t{white_move}\t{black_move}\n")
+        self.history_text.see(tk.END)
 
     def draw_board(self) -> None:
         """
@@ -59,17 +112,17 @@ class ChessUI:
                 y1      = row * self.cell_size
                 x2      = x1 + self.cell_size
                 y2      = y1 + self.cell_size
-                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color)
+                self.board.create_rectangle(x1, y1, x2, y2, fill=color)
 
         #Draw the pieces
         for col in self.cols_str:
             for row in range(1, 9):
                 position = f'{col}{row}'
-                response = self.board.what_in(position)
+                response = self.logicboard.what_in(position)
                 if 'Empty' in response:
                     continue                
                 x, y = self._translate_position_logic2px(position)
-                self.canvas.create_image(x, y, image=self.pieces[response], anchor='nw')
+                self.board.create_image(x, y, image=self.pieces[response], anchor='nw')
 
         #If a piece is selected draw it with inverted colors
         if self.selected is not None:
@@ -78,10 +131,10 @@ class ChessUI:
             x1, y1          = self._translate_position_logic2px(position)
             x2              = x1 + self.cell_size
             y2              = y1 + self.cell_size
-            col, row        = self.board.logic2array(position)
+            col, row        = self.logicboard.logic2array(position)
             color           = colors[(row + col) % 2]
-            self.canvas.create_rectangle(x1, y1, x2, y2, fill=color)
-            self.canvas.create_image(x1, y1, image=self.pieces[piece+' inverted'], anchor='nw')
+            self.board.create_rectangle(x1, y1, x2, y2, fill=color)
+            self.board.create_image(x1, y1, image=self.pieces[piece+' inverted'], anchor='nw')
 
     def _translate_position_logic2px(self, position:str) -> Tuple[int, int]:
         """
@@ -184,21 +237,21 @@ class ChessUI:
         target_position = self._translate_position_px2logic(event.x, event.y)
         
         if self.selected is None: #Select the piece to move
-            piece = self.board.what_in(target_position)
+            piece = self.logicboard.what_in(target_position)
             if not 'Empty' in piece:
                 self.selected = (target_position, piece)
-                self.canvas.delete("all")
+                self.board.delete("all")
                 self.draw_board()
         else:
             piece_position, piece = self.selected
             self.selected = None
             if piece_position != target_position:
-                moved = self.board.move(piece, piece_position, target_position)
+                moved = self.logicboard.move(piece, piece_position, target_position)
                 if moved:
-                    self.canvas.delete("all")
+                    self.board.delete("all")
                     self.draw_board() #Draw new position
                 else:
                     print("Movimiento inválido")
             else: #Deselect
-                self.canvas.delete("all")
+                self.board.delete("all")
                 self.draw_board()              

@@ -1,11 +1,8 @@
 import tkinter as tk
-from neuralcheck.ui import ChessUI
-"""
 import sys
 import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-"""
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+from neuralcheck.ui import ChessUI
 
 # TODO: Implementar la función de validación
 # FIXME: Corregir el error de índice en la línea 20

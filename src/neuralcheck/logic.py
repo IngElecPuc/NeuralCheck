@@ -270,6 +270,7 @@ class ChessBoard:
         #TODO mate
         #TODO promoción
         #TODO desambigüación de dos piezas que pueden ir a una misma casilla
+        movement = ''
 
         return movement + initial_position.lower()
         

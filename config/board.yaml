@@ -1,4 +1,7 @@
-Size: 64
+Size:
+  square: 64
+  width: 900
+  height: 600
 
 Pieces paths:
   white:
