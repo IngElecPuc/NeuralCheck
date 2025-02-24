@@ -176,6 +176,25 @@ class ChessBoard:
         else:
             return f'{color} {name}'
 
+    def search_for(self, piece:str) -> List:
+        """
+        Search for all positions of pieces of the same type
+
+        Parameters:
+            piece: a string indicating color and piece, e.g., 'white king'
+
+        Returns:
+            List: a list of all positions where is a piece of the same type
+        """
+        piece_code  = self.name2num[piece.split(' ')[1]]
+        piece_code  = piece_code if 'white' in piece else -piece_code
+        all_pieces  = np.where(self.board == piece_code)
+        all_pieces  = np.array(all_pieces).T
+        in_coords   = [0] * len(all_pieces)
+        for i, (x, y) in enumerate(all_pieces):
+            in_coords[i] = self.array2logic(x, y)
+        return in_coords
+
     def allowed_movements(self, piece:str, position:str) -> List[str]:
         """
         Calculates all legal movements of the piece.
@@ -217,7 +236,7 @@ class ChessBoard:
 
         return npos
 
-    def move(self, piece:str, initial_position:str, end_position:str) -> bool:
+    def move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
         """
         Executes a move if it is legal.
 
@@ -229,25 +248,27 @@ class ChessBoard:
         Returns:
             True if the move is legal and successfully executed, False otherwise.
         """        
-        legal_movements = self.allowed_movements(piece, initial_position)
+        legal_movements = self.allowed_movements(piece, initial_position) #TODO reduce legal movements for check and pinned pieces
         
         xi, yi = self.logic2array(initial_position)
         xe, ye = self.logic2array(end_position)
         
         if end_position in legal_movements:
+            movement = self.transcribe(piece, initial_position, end_position)
+            if 'x' in movement: #TODO add to captured pieces whatever in end_position
+                pass
+            self.last_turn = movement
             self.put('Empty square', initial_position)
             self.put(piece, end_position)
             #TODO Agregar promoción de peones
-            turn = self.transcribe(piece, initial_position, end_position)
-            self.last_turn = turn
             if self.white_turn:
-                self.history.append([turn])
+                self.history.append([movement])
             else:
-                self.history[-1].append(turn)
+                self.history[-1].append(movement)
             self.white_turn = not self.white_turn
-            return True
+            return True, movement
         else:
-            return False
+            return False, ''
             
     def transcribe(self, piece: str, initial_position: str, end_position: str) -> str:
         """
@@ -262,17 +283,43 @@ class ChessBoard:
         Returns:
             A string in standard chess notation representing the move.
         """ 
-
-        #TODO capura
         #TODO enroque corto
         #TODO enroque largo
-        #TODO jate
+        #TODO jaque, y ojo, jaque a la descubierta
         #TODO mate
         #TODO promoción
-        #TODO desambigüación de dos piezas que pueden ir a una misma casilla
-        movement = ''
+        
 
-        return movement + initial_position.lower()
+        movement = ''
+        if 'king' in piece:
+            movement += 'K'
+        elif 'queen' in piece:
+            movement += 'Q'
+        elif 'bishop' in piece:
+            movement += 'B'
+        elif 'knight' in piece:
+            movement += 'N'
+        elif 'rook' in piece:
+            movement += 'R'
+
+        same_piece = self.search_for(piece) #Check all pieces of the same type to the current piece
+        if len(same_piece) > 1: #If there are other pieces            
+            candidates = []
+            for position in same_piece:
+                if end_position in self.allowed_movements(piece, position): #FIXME En el caso de los peones hay que ver si ellos se pueden mover solo capturando.  hay que arreglar este método, probablemente haya que agregar la posición final para que pueda chequear si el peon puede llegar capturando
+                    candidates.append(position)
+            if len(candidates) > 1: #We need desammutation
+                if 'pawn' not in piece:
+                    pdb.set_trace()
+                if len(set(pos[0] for pos in candidates)) == 1: #Check if the pieces are in the same column
+                    movement += initial_position[1] #Disambiguate by row
+                else: 
+                    movement += initial_position[0] #Disambiguate by column
+
+        if 'Empty' not in self.what_in(end_position):
+            movement += 'x'
+
+        return movement + end_position.lower()
         
 
 if __name__ == '__main__':

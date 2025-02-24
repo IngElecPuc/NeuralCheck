@@ -44,7 +44,6 @@ class ChessUI:
         self.board.grid(row=0, column=1) 
         
         #Text Widget for history plays
-        self.history_moves = []  # Para guardar las jugadas, en lugar de self.history['history']
         self.history_text = tk.Text(self.main_frame, width=20, height=20, wrap=tk.WORD)
         self.history_text.grid(row=0, column=2, sticky="ns", padx=10)
         self.history_scrollbar = tk.Scrollbar(self.main_frame, command=self.history_text.yview)
@@ -80,17 +79,9 @@ class ChessUI:
         Parameters: 
             move: the move text to add
         """
-
-        if self.logicboard.white_turn: #For white's turn initiate a new line, for black's add to the end
-            self.history_moves.append([move])
-        else:
-            if self.history_moves:
-                self.history_moves[-1].append(move)
-            else:
-                self.history_moves.append(["", move]) 
         
         self.history_text.delete("1.0", tk.END) #Delete and redraw all
-        for turn, moves in enumerate(self.history_moves):
+        for turn, moves in enumerate(self.logicboard.history):
             if len(moves) == 1:
                 white_move = moves[0]
                 black_move = ""
@@ -246,10 +237,11 @@ class ChessUI:
             piece_position, piece = self.selected
             self.selected = None
             if piece_position != target_position:
-                moved = self.logicboard.move(piece, piece_position, target_position)
+                moved, movement = self.logicboard.move(piece, piece_position, target_position)
                 if moved:
                     self.board.delete("all")
                     self.draw_board() #Draw new position
+                    self.add_move(movement) #Add move to history
                 else:
                     print("Movimiento inválido")
             else: #Deselect
