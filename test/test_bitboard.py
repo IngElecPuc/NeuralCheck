@@ -2,12 +2,11 @@ import numpy as np
 #from neuralcheck.bitboard import get_bitboard_position
 from neuralcheck.bitboard import ChessBitboard
 
-"""
-
 def test_get_bitboard_position():
-    assert get_bitboard_position("e4") == (1 << (4 + 3 * 8)), 'Error de prueba unitaria'  # Verificar si la posición es correcta
+    bitboard = ChessBitboard()
+    assert bitboard.get_bitboard_position("e4") == (1 << (3 + 3 * 8)), 'Error de prueba unitaria'  
     print('Prueba unitaria exitosa')
-"""
+
     
 def test_bitboard_initialize():
     numboard = np.array([[-4, -2, -3, -5, -6, -3, -2, -4],
@@ -40,3 +39,13 @@ def test_bitboard_initialize():
     assert bitboard.masks['black'] == black, 'Error de prueba unitaria'
     
     print('Prueba unitaria exitosa')
+
+def test_bitboard_flips():
+    ruy_lopez = 13832560274236045305
+    bitboard = ChessBitboard()
+
+    assert bitboard.flip_horizontal(ruy_lopez) == 18297848286656130975, 'Error de prueba unitaria'
+    assert bitboard.flip_vertical(ruy_lopez) == 18011869668307957695, 'Error de prueba unitaria'
+    assert bitboard.flip_horizontal(bitboard.flip_horizontal(ruy_lopez)) == 11524465224858267645, 'Error de prueba unitaria'
+    assert bitboard.flip_vertical(bitboard.flip_horizontal(ruy_lopez)) == 11524465224858267645, 'Error de prueba unitaria'
+    

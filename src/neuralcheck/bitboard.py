@@ -184,9 +184,41 @@ class ChessBitboard:
         row = int(row) - 1
         return 1 << col + row * 8
 
+    def flip_horizontal(self, bitboard: int) -> int: 
+        """
+        Flips the bitboard horizontally, as it was a mirror.
+
+        This operation mirrors the board along the vertical axis, swapping ranks 
+        (e.g., the first rank becomes the eighth, the second becomes the seventh, etc.).
+        
+        Parameters:
+            bitboard: A 64-bit integer representing the board's bitboard.
+
+        Returns:
+            int: A 64-bit integer representing the horizontally flipped bitboard.
+        """
+        #This is a Hanoi tower like algorithm where we want to swap rows to achieve vertical flip.
+        #We work each column as a byte group
+        k1 = 0x5555555555555555 #k1 mask: selects every other byte to prepare for swapping adjacent bytes. A single row looks like 01010101
+        k2 = 0x3333333333333333 #k2 mask: selects every other 16-bit word to prepare for swapping 16-bit groups. A single row looks like 00110011
+        k3 = 0X0F0F0F0F0F0F0F0F #k3 mask: selects every other 32-bit word to prepare for swapping 32-bit groups. A single row looks like 00001111
+        
+        #Step 1: Swap adjacent bits.
+        #- (bitboard >> 1) shifts the board right by one bit; "& k1" selects bytes originally in odd positions.
+        #- (bitboard & k1) selects bytes originally in even positions; "<< 1" shifts them left by one bit.
+        #The OR operation combines these two parts, effectively swapping each pair of adjacent bytes
+        bitboard = (bitboard >> 1) & k1 | (bitboard & k1) << 1
+        #Step 2: Swap adjacent 16-bit words.
+        bitboard = (bitboard >> 2) & k2 | (bitboard & k2) << 2
+        #Step 3: Swap the 32-bit halves.
+        bitboard = (bitboard >> 4) & k3 | (bitboard & k3) << 4
+        
+        return bitboard & 0xFFFFFFFFFFFFFFFF #Return the final 64-bit result, ensuring no overflow beyond 64 bits.
+
     def flip_vertical(self, bitboard: int) -> int:
         """
-        Flips the bitboard vertically, transforming the board as if viewed from Black's perspective.
+        Flips the bitboard vertically, transforming the board as if viewed from Black's 
+        perspective when combining with flip_horizontal.
 
         This operation mirrors the board along the horizontal axis, swapping ranks 
         (e.g., the first rank becomes the eighth, the second becomes the seventh, etc.).
@@ -197,29 +229,14 @@ class ChessBitboard:
         Returns:
             int: A 64-bit integer representing the vertically flipped bitboard.
         """
-        # BUG Only doing flip across the horizontal simetry axis, check if this is the desire behaviour -> falta hacer un flip horizontal
         k1 = 0x00FF00FF00FF00FF #k1 mask: selects every other byte (0x00FF00FF00FF00FF) to prepare for swapping adjacent bytes.
         k2 = 0x0000FFFF0000FFFF #k2 mask: selects every other 16-bit word (0x0000FFFF0000FFFF) to prepare for swapping 16-bit groups.
+        k3 = 0x00000000FFFFFFFF #k3 mask: selects every other 32-bit word (0x00000000FFFFFFFF) to prepare for swapping 32-bit groups.
 
-        # Step 1: Swap adjacent bytes.
-        # - (bitboard >> 8) shifts the board right by one byte; "& k1" selects bytes originally in odd positions.
-        # - (bitboard & k1) selects bytes originally in even positions; "<< 8" shifts them left by one byte.
-        # The OR operation combines these two parts, effectively swapping each pair of adjacent bytes.
         bitboard = ((bitboard >> 8) & k1) | ((bitboard & k1) << 8)
-
-        # Step 2: Swap adjacent 16-bit words.
-        # - (bitboard >> 16) shifts the board right by 16 bits; "& k2" selects the lower 16 bits of each 32-bit block.
-        # - (bitboard & k2) selects the lower 16 bits of each 32-bit block; "<< 16" shifts them left by 16 bits.
-        # This swaps the two-byte groups within each 32-bit half of the board.
         bitboard = ((bitboard >> 16) & k2) | ((bitboard & k2) << 16)
+        bitboard = (bitboard >> 32) & k3 | (bitboard & k3) << 32
 
-        # Step 3: Swap the 32-bit halves.
-        # - (bitboard >> 32) moves the upper 32 bits to the lower 32-bit half.
-        # - (bitboard << 32) moves the lower 32 bits to the upper 32-bit half.
-        # The OR operation completes the reversal of all 8 bytes.
-        bitboard = (bitboard >> 32) | (bitboard << 32)
-
-        # Return the final 64-bit result, ensuring no overflow beyond 64 bits.
         return bitboard & 0xFFFFFFFFFFFFFFFF
 
     def active_positions(self, bitmap): #Chequear un método más rápido que retorne algo parecido
@@ -294,6 +311,10 @@ class ChessBitboard:
             pieces_value    = self.flip_vertical(pieces_value)
             player_value    = self.flip_vertical(player_value)
             target_bitmap   = self.flip_vertical(target_bitmap)
+            #pieces_value    = self.flip_horizontal(pieces_value) TODO
+            #player_value    = self.flip_horizontal(player_value)
+            #target_bitmap   = self.flip_horizontal(target_bitmap)
+
 
         #TODO Más tarde implementar lógica de movimiento en funciones para cada pieza o esto va a crecer descontroladamente
         pieces = pieces_value & player_value #Limit the candidate pieces to those belonging to the current player.
@@ -326,13 +347,21 @@ class ChessBitboard:
             #BUG Not erasing original black knight
             #BUG Chequear Ng3, Nd4, Ng5 -> Se crean piezas que no existen
             knight_offsets = [17, 15, 10, 6, -17, -15, -10, -6]
+            candidates = []
             for offset in knight_offsets:
                 if offset > 0:
                     if (pieces << offset) & target_bitmap:
                         source_bitmap = target_bitmap >> offset
+                        candidates.append(source_bitmap)
                 elif offset < 0:
                     if (pieces >> (-offset)) & target_bitmap:
                         source_bitmap = target_bitmap << (-offset)
+                        candidates.append(source_bitmap)
+
+            if len(candidates) == 1:
+                source_bitmap = candidates[0]
+            elif len(candidates) >= 1: #TODO Desamgibüar Si hay más de un caballo que puede llegar a la casilla objetivo
+                pass
             
         elif pieces_key == 'R': # Rook move logic
             pass
