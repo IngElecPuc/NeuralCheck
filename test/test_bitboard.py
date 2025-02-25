@@ -8,7 +8,7 @@ def test_get_bitboard_position():
     print('Prueba unitaria exitosa')
 
     
-def test_bitboard_initialize():
+def test_bitboard_initialize(nombre_prueba):
     numboard = np.array([[-4, -2, -3, -5, -6, -3, -2, -4],
                         [-1, -1, -1, -1, -1, -1, -1, -1],
                         [ 0,  0,  0,  0,  0,  0,  0,  0],
@@ -29,7 +29,8 @@ def test_bitboard_initialize():
     white   = 0x000000000000FFFF
     black   = 0xFFFF000000000000
 
-    assert bitboard.masks['K'] == kings, 'Error de prueba unitaria'
+    numero_prueba = 1
+    assert bitboard.masks['K'] == kings, f'Error de prueba unitaria en {nombre_prueba} con prueba n° {numero_prueba}'
     assert bitboard.masks['Q'] == queens, 'Error de prueba unitaria'
     assert bitboard.masks['B'] == bishops, 'Error de prueba unitaria'
     assert bitboard.masks['N'] == knights, 'Error de prueba unitaria'

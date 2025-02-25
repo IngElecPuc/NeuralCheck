@@ -1,6 +1,10 @@
 import pdb
 import numpy as np
 import bitboardops as bb
+import yaml
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 from neuralcheck.bitboard import ChessBitboard
 from typing import Tuple, List
 
@@ -14,11 +18,11 @@ class ChessBoard:
         #That level is syncronized with this for tracking pourpuses.
         
         self._initialize_resources()
-        self._initialize_pieces()
-        self.white_turn = True
         self.history = []
         self.last_turn = ''
-        self.bitboard = ChessBitboard()
+        self.load_position('config/initial_position.yaml') 
+        self.bitboard = ChessBitboard(self.board)
+
 
     def _initialize_resources(self) -> None:
         """
@@ -32,35 +36,6 @@ class ChessBoard:
         self.num2name = {(num+1):name for num, name in enumerate(self._pieces)}
         self.name2num['Empty square'] = 0
         self.num2name[0] = 'Empty square'
-
-    def _initialize_pieces(self) -> None:
-        """
-        Initializes numpy matrix with the corresponding piece code
-        """
-        row = [0]*8
-        board = [row]*8
-        self.board = np.array(board, dtype=np.int64)
-
-        self.put('white king', 'e1')
-        self.put('white queen', 'd1')
-        self.put('white bishop', 'f1')
-        self.put('white bishop', 'c1')
-        self.put('white knight', 'g1')
-        self.put('white knight', 'b1')
-        self.put('white rook', 'h1')
-        self.put('white rook', 'a1')
-        self.put('black king', 'e8')
-        self.put('black queen', 'd8')
-        self.put('black bishop', 'f8')
-        self.put('black bishop', 'c8')
-        self.put('black knight', 'g8')
-        self.put('black knight', 'b8')
-        self.put('black rook', 'h8')
-        self.put('black rook', 'a8')
-        
-        for i, col in enumerate(self._cols_str):
-            self.put('white pawn', f'{col}2')
-            self.put('black pawn', f'{col}7')
     
     def logic2array(self, position:str) -> Tuple[int, int]:
         """
@@ -158,6 +133,19 @@ class ChessBoard:
         for i, (x, y) in enumerate(all_pieces):
             in_coords[i] = self.array2logic(x, y)
         return in_coords
+
+    def check_or_mate(self) -> int:
+        """
+        Search the position to check if the king is in checks or mated
+
+        Returns:
+            int:    -2 if it is a black's mate 
+                    -1 if it is a black's check
+                    0 if nothing
+                    1 if it is a white's check
+                    2 if it is a white's mate
+        """
+        return 0
 
     def allowed_movements(self, piece:str, position:str, in_check:bool=False) -> List[str]:
         """
@@ -352,6 +340,83 @@ class ChessBoard:
             movement += 'x'
 
         return movement + end_position.lower()
+        
+    def read_move(self, play: str) -> Tuple[str, str, str]:
+        """
+        Transcribes a move from a chess like play
+
+        Parameters:
+            play: A chess like play, e.g., 'Nf3'
+        
+        Returns:
+            piece: A string representing the type of piece, e.g., 'knight', 'queen'.
+            initial_position: A two-character string representing the starting position, e.g., 'g1'.
+            end_position: A two-character string representing the destination position, e.g., 'f3'.
+
+        """
+        #TODO finish
+        piece = ''
+        initial_position = ''
+        end_position = ''
+        return piece, initial_position, end_position
+
+    def save_position(self, filename:str) -> None:
+        """
+        Saves a position to a YAML file. It doesn't saves the plays.
+        """
+        board = {}
+        for x in range(8):
+            for y in range(8):
+                position    = self.array2logic(x,y)
+                piece       = self.what_in(position)
+                if 'Empty' not in piece:
+                    board[position] = piece
+        board["Playe's Turn"] = 'white' if self.white_turn else 'black'
+        with open(filename, "w", encoding="utf-8") as file:
+            yaml.dump(board, file, allow_unicode=True, default_flow_style=False)
+    
+    def load_position(self, filename) -> None:
+        """
+        Loads a position from a YAML file. It has no knoledge of the plays.
+        """
+        with open(filename, "r", encoding="utf-8") as file:
+            board = yaml.safe_load(file)
+
+        self.board = np.zeros((8,8), dtype=np.int64)
+        for position, piece in board.items():
+            if position == "Playe's Turn":
+                continue
+            self.put(piece, position)
+
+        self.white_turn = board["Playe's Turn"] == 'white'
+        self.bitboard = ChessBitboard(self.board)
+
+    def save_game(self, filename:str) -> None:
+        """
+        Saves a game to a YAML file. It doesn't saves the position.
+        """
+        with open(filename, "w", encoding="utf-8") as file:
+            yaml.dump(self.history, file, allow_unicode=True, default_flow_style=False)
+
+    def load_game(self, filename:str) -> None:
+        """
+        Loads a game from a YAML file. It infers the position.
+        """
+        with open(filename, "r", encoding="utf-8") as file:
+            history = yaml.safe_load(file)
+
+        self.history = history
+        self.load_position('config/initial_position.yaml')
+
+        for white_turn, black_turn in self.history: 
+            piece, initial_position, end_position = self.read_move(white_turn)
+            self.move(piece, initial_position, end_position)
+            self.white_turn = False
+            if black_turn is None:
+                break
+            piece, initial_position, end_position = self.read_move(black_turn)
+            self.move(piece, initial_position, end_position)
+            self.white_turn = True
 
 if __name__ == '__main__':
     board = ChessBoard()
