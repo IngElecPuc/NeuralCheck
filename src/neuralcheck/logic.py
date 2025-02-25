@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 from neuralcheck.bitboard import ChessBitboard
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 
 class ChessBoard:
     def __init__(self):
@@ -134,7 +134,7 @@ class ChessBoard:
             in_coords[i] = self.array2logic(x, y)
         return in_coords
 
-    def check_or_mate(self) -> int:
+    def check_or_mate(self) -> Tuple[int, Dict[str, List[str]], Dict[str, List[str]]]:
         """
         Search the position to check if the king is in checks or mated
 
@@ -144,8 +144,37 @@ class ChessBoard:
                     0 if nothing
                     1 if it is a white's check
                     2 if it is a white's mate
+            enemy_movements: a dictionary with all posible movements and positions 
+            of enemy pieces that checks or mates the king
+            friendly_help: a dictionary with all posible movements and positions
+            of frendly pieces that can bloc the check or the mate
         """
-        return 0
+        player_turn     = -1 if self.white_turn else 1 #Check for reverse code
+        x, y            = np.where(self.board == 6 * player_turn)
+        x, y            = x.item(), y.item()
+        kings_position  = self.array2logic(x,y)
+        enemy_movements = {}
+        friendly_help   = {}
+        for piece_code in range(1,6):
+            all_alike   = np.where(self.board == piece_code * player_turn)
+            all_alike   = np.array(all_alike).reshape(-1,2)
+            piece       = 'black ' if self.white_turn else 'white '
+            piece       += self.num2name[piece_code]
+            for x, y in all_alike:
+                position = self.array2logic(x,y)
+                movements = self.allowed_movements(piece, position)
+                if kings_position in movements:
+                    enemy_movements[position] = movements
+        
+        danger = player_turn if len(enemy_movements) > 0 else 0 #Its a check if there is someone that can reach the king in the current turn
+        king = 'white ' if self.white_turn else 'black '
+        king += 'king'
+        if danger > 0:
+            kings_movements = self.allowed_movements(king, kings_position, in_check=True)
+            danger *= 2 if len(kings_movements) + len(friendly_help) == 0 else 1 #It is a Mate if the king has no scape neither can a friendly piece bloc the mate
+            #FIXME the king can be helped with a friendly piece which is not yet calculated
+
+        return 0, enemy_movements
 
     def allowed_movements(self, piece:str, position:str, in_check:bool=False) -> List[str]:
         """
@@ -174,8 +203,8 @@ class ChessBoard:
             moves = np.empty((0, 2), dtype=np.int64)
             player_turn = 1 if self.white_turn else -1
             for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
-                for i in range(1, 9): #We advance i units in the desired direction and check for obstacles at each step.
-                    if 0 < x + i*dx and x + i*dx < 9 and 0 < y + i*dy and y + i*dy < 9: #Ensure movement stays within the board
+                for i in range(1, 8): #We advance i units in the desired direction and check for obstacles at each step.
+                    if 0 < x + i*dx and x + i*dx < 8 and 0 < y + i*dy and y + i*dy < 8: #Ensure movement stays within the board
                         if player_turn * self.board[x + i*dx, y + i*dy] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
                             moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
                             if player_turn * self.board[x + i*dx, y + i*dy] < 0: #Stops, but allows capturing.
@@ -213,6 +242,12 @@ class ChessBoard:
             piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1]])
             piece_moves = remove_illegal(x, y, piece_moves, is_king=True)
             # TODO agregar enroque
+            # El rey se ha movido antes: buscar en el historial
+            # La torre se ha movido antes: buscar en el historial
+            # Los espacios están libres: self.what_in == Empty
+            # El rey no está en Jaque -> self.check_or_mate = 0, _, _
+            # La torre no está siendo atacada
+
         elif 'queen' in piece:
             all_vectors = np.concatenate((line_vectors, diagonal_vectors))
             piece_moves = raycast(x, y, all_vectors)
@@ -223,11 +258,12 @@ class ChessBoard:
             piece_moves = remove_illegal(x, y, piece_moves)
         elif 'rook' in piece:
             piece_moves = raycast(x, y, diagonal_vectors)
-        elif 'pawn' in piece: 
+        elif 'pawn' in piece:             
             if self.white_turn: 
+                piece_moves = np.array([[-1, 0]])
                 if x == 6: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
-                if y + 1 < 9 and x - 1 > 0:
+                if y + 1 < 8 and x - 1 > 0:
                     if self.board[x - 1, y + 1] < 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, 1]])))
                 if y - 1 > 0 and x - 1 > 0:
@@ -237,12 +273,13 @@ class ChessBoard:
                     pass
 
             else: 
+                piece_moves = np.array([[1, 0]])
                 if x == 1: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
-                if y + 1 < 9 and x + 1 < 9:
+                if y + 1 < 8 and x + 1 < 8:
                     if self.board[x + 1, y + 1] > 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[1, 1]])))
-                if y - 1 > 0 and x + 1 < 9:
+                if y - 1 > 0 and x + 1 < 8:
                     if self.board[x + 1, y - 1] > 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
                 if x == 6: #En passant TODO
@@ -258,6 +295,24 @@ class ChessBoard:
             legal_moves [i] = self.array2logic(x, y)
 
         return legal_moves 
+
+    def all_raw_plausible_movements(self) -> Dict[str, str]:
+        """
+        Calculates and updates all movements that each piece can perform
+        """
+
+        self.plauble_movements = {}
+        for x in range(8):
+            for y in range(8):
+                if self.board[x, y] != 0:
+                    piece = 'white ' if self.board[x, y] > 0 else 'black '
+                    piece += self.num2name[np.abs(self.board[x, y]).item()]
+                    position = self.array2logic(x,y)
+                    movements = self.allowed_movements(piece, position)
+                    if len(movements) > 0:
+                        self.plauble_movements[position] = movements
+
+        return self.plauble_movements
 
     def move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
         """
