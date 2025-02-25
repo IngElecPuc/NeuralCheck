@@ -231,19 +231,22 @@ class ChessUI:
             piece = self.logicboard.what_in(target_position)
             if not 'Empty' in piece:
                 self.selected = (target_position, piece)
-                self.board.delete("all")
-                self.draw_board()
+#                self.board.delete("all")
+#                self.draw_board()
         else:
             piece_position, piece = self.selected
             self.selected = None
             if piece_position != target_position:
                 moved, movement = self.logicboard.move(piece, piece_position, target_position)
                 if moved:
-                    self.board.delete("all")
-                    self.draw_board() #Draw new position
+#                    self.board.delete("all")
+#                    self.draw_board() #Draw new position
                     self.add_move(movement) #Add move to history
                 else:
                     print("Movimiento inválido")
-            else: #Deselect
-                self.board.delete("all")
-                self.draw_board()              
+                    print("Los movimientos válidos son:")
+                    print(self.logicboard.allowed_movements(piece, piece_position))
+
+#            else: #Deselect
+        self.board.delete("all")
+        self.draw_board()              

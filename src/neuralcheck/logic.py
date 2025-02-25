@@ -33,42 +33,6 @@ class ChessBoard:
         self.name2num['Empty square'] = 0
         self.num2name[0] = 'Empty square'
 
-        #FIXME for now movement is done with arrays
-        king_movement_matrix    = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1]])
-        wpawn_movement_matrix   = np.array([[1,1], [0,1], [-1,1]])
-        bpawn_movement_matrix   = np.array([[-1,-1], [0,-1], [1,-1]])
-        bishop_movement_matrix  = np.array([[a,a] for a in np.arange(1,8)])
-        bishop_movement_matrix  = np.concatenate((bishop_movement_matrix, np.array([[-a,-a] for a in np.arange(1,8)])))
-        bishop_movement_matrix  = np.concatenate((bishop_movement_matrix, np.array([[a,-a] for a in np.arange(1,8)])))
-        bishop_movement_matrix  = np.concatenate((bishop_movement_matrix, np.array([[-a,a] for a in np.arange(1,8)])))
-        rook_movement_matrix    = np.array([[a,0] for a in np.arange(1,8)])
-        rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[-a,0] for a in np.arange(1,8)])))
-        rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[0,a] for a in np.arange(1,8)])))
-        rook_movement_matrix    = np.concatenate((rook_movement_matrix, np.array([[0,-a] for a in np.arange(1,8)])))
-        queen_movement_matrix   = np.concatenate((bishop_movement_matrix, rook_movement_matrix))
-        knight_movement_matrix  = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]])
-        king_movement_matrix    = np.column_stack((-king_movement_matrix[:, 1], king_movement_matrix[:, 0])) #Converting from cartesian logic to numpy notation: row = (n - 1) - y; column = x
-        queen_movement_matrix   = np.column_stack((-queen_movement_matrix[:, 1], queen_movement_matrix[:, 0]))
-        bishop_movement_matrix  = np.column_stack((-bishop_movement_matrix[:, 1], bishop_movement_matrix[:, 0]))
-        knight_movement_matrix  = np.column_stack((-knight_movement_matrix[:, 1], knight_movement_matrix[:, 0]))
-        rook_movement_matrix    = np.column_stack((-rook_movement_matrix[:, 1], rook_movement_matrix[:, 0]))
-        wpawn_movement_matrix   = np.column_stack((-wpawn_movement_matrix[:, 1], wpawn_movement_matrix[:, 0]))
-        bpawn_movement_matrix   = np.column_stack((-bpawn_movement_matrix[:, 1], bpawn_movement_matrix[:, 0]))
-        self.movemnts_matrices  = {
-            'white king': king_movement_matrix,
-            'white queen': queen_movement_matrix,
-            'white bishop': bishop_movement_matrix,
-            'white knight': knight_movement_matrix,
-            'white rook': rook_movement_matrix,
-            'white pawn': wpawn_movement_matrix,
-            'black king': king_movement_matrix,
-            'black queen': queen_movement_matrix,
-            'black bishop': bishop_movement_matrix,
-            'black knight': knight_movement_matrix,
-            'black rook': rook_movement_matrix,
-            'black pawn': bpawn_movement_matrix
-        }
-
     def _initialize_pieces(self) -> None:
         """
         Initializes numpy matrix with the corresponding piece code
@@ -195,46 +159,117 @@ class ChessBoard:
             in_coords[i] = self.array2logic(x, y)
         return in_coords
 
-    def allowed_movements(self, piece:str, position:str) -> List[str]:
+    def allowed_movements(self, piece:str, position:str, in_check:bool=False) -> List[str]:
         """
         Calculates all legal movements of the piece.
 
         Parameters:
             piece: a string indicating color and piece, e.g., 'white king'
             position: a string of size 2 with a character from a to h and a number from 1 to 8, e.g., 'e4'
+            in_check: there is a check to the king
 
         Returns:
             List[str]: a list with all legal movements of the piece in chess-like format
         """
+        def raycast(x:int, y:int, vectors:np.array) -> np.array:
+            """
+            Calculate a raycast of the piece from direction vectors stoping when an obstacule is founded
+
+            Parameters:
+                x: x position in the board of the piece
+                y: y position in the board of the piece
+                vectors: an array with all plausible directions for the piece to go
+
+            Returns
+                np.array: an array with all posible directions to travel acording to rules
+            """
+            moves = np.empty((0, 2), dtype=np.int64)
+            player_turn = 1 if self.white_turn else -1
+            for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
+                for i in range(1, 9): #We advance i units in the desired direction and check for obstacles at each step.
+                    if 0 < x + i*dx and x + i*dx < 9 and 0 < y + i*dy and y + i*dy < 9: #Ensure movement stays within the board
+                        if player_turn * self.board[x + i*dx, y + i*dy] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
+                            moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
+                            if player_turn * self.board[x + i*dx, y + i*dy] < 0: #Stops, but allows capturing.
+                                break
+                        else: #Encounter a piece of the same color; stops immediately.
+                            break
+            return moves
+        
+        def remove_illegal(x:int, y:int, vectors:np.array, is_king:bool=False) -> np.array:
+            #NOTE el rey no se puede mover donde otras piezas lo estén atacando
+            #TODO chequear que la pieza no esté pinneada al rey
+            player_turn = 1 if self.white_turn else -1
+            i = 0
+            while i < len(vectors):
+                dx, dy = vectors[i]            
+                if player_turn * self.board[x + i*dx, y + i*dy] > 0: #There is a piece of its own
+                    vectors = np.delete(vectors, i, axis=0)
+                else:
+                    i += 1
+            return vectors
+
+        #NOTE si el rey está en jaque las únicas piezas que se pueden mover son el mismo, y aquellas que lo protejen
         if 'black' in piece and self.white_turn:
             return []
         if 'white' in piece and not self.white_turn:
             return []
         
-        x, y = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
-        pos = np.array([x, y])
-        pmm = self.movemnts_matrices[piece]
+        line_vectors        = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]])
+        diagonal_vectors    = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]])
         
-        if 'pawn' in piece: #Special movement for pawns in their starting rank
-            if self.white_turn and x == 6:
-                pmm = np.concatenate((pmm, np.array([[-2, 0]])))
-            if not self.white_turn and x == 1:
-                pmm = np.concatenate((pmm, np.array([[2, 0]])))
+        x, y            = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
+        position        = np.array([x, y])
+        #pdb.set_trace()
+        if 'king' in piece:
+            piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1]])
+            piece_moves = remove_illegal(x, y, piece_moves, is_king=True)
+            # TODO agregar enroque
+        elif 'queen' in piece:
+            all_vectors = np.concatenate((line_vectors, diagonal_vectors))
+            piece_moves = raycast(x, y, all_vectors)
+        elif 'bishop' in piece:
+            piece_moves = raycast(x, y, diagonal_vectors)
+        elif 'knight' in piece:
+            piece_moves = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]]) 
+            piece_moves = remove_illegal(x, y, piece_moves)
+        elif 'rook' in piece:
+            piece_moves = raycast(x, y, diagonal_vectors)
+        elif 'pawn' in piece: 
+            if self.white_turn: 
+                if x == 6: #Special movement for pawns in their starting rank
+                    piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
+                if y + 1 < 9 and x - 1 > 0:
+                    if self.board[x - 1, y + 1] < 0: #There is an enemy piece
+                        piece_moves = np.concatenate((piece_moves, np.array([[-1, 1]])))
+                if y - 1 > 0 and x - 1 > 0:
+                    if self.board[x - 1, y - 1] < 0: #Idem
+                        piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
+                if x == 1: #En passant TODO
+                    pass
 
-        movs = pos + pmm
-        mask = np.all((movs >= 0) & (movs <= 7), axis=1) #Remove moves that go off the board
-        movs = movs[mask]
-        #TODO Falta chequear si los movimientos terminan sobre una pieza y qué tipo de pieza es
-        #TODO Falta chequear los movimientos de proyección en línea: reina, alfil, torre
-        #TODO Faltan chequear movimientos especiales:
-        #   -Captura al paso
-        #   -Enroque
+            else: 
+                if x == 1: #Special movement for pawns in their starting rank
+                    piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
+                if y + 1 < 9 and x + 1 < 9:
+                    if self.board[x + 1, y + 1] > 0: #There is an enemy piece
+                        piece_moves = np.concatenate((piece_moves, np.array([[1, 1]])))
+                if y - 1 > 0 and x + 1 < 9:
+                    if self.board[x + 1, y - 1] > 0: #Idem
+                        piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
+                if x == 6: #En passant TODO
+                    pass
+        else:
+            piece_moves = np.array([[0,0]])
 
-        npos = [''] * len(movs)
-        for i, (x, y) in enumerate(movs):
-            npos[i] = self.array2logic(x, y)
+        destinations    = position + piece_moves
+        mask            = np.all((destinations >= 0) & (destinations <= 7), axis=1) #Remove moves that go off the board
+        destinations    = destinations[mask]
+        legal_moves = [''] * len(destinations)
+        for i, (x, y) in enumerate(destinations):
+            legal_moves [i] = self.array2logic(x, y)
 
-        return npos
+        return legal_moves 
 
     def move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
         """
@@ -289,7 +324,6 @@ class ChessBoard:
         #TODO mate
         #TODO promoción
         
-
         movement = ''
         if 'king' in piece:
             movement += 'K'
@@ -309,8 +343,6 @@ class ChessBoard:
                 if end_position in self.allowed_movements(piece, position): #FIXME En el caso de los peones hay que ver si ellos se pueden mover solo capturando.  hay que arreglar este método, probablemente haya que agregar la posición final para que pueda chequear si el peon puede llegar capturando
                     candidates.append(position)
             if len(candidates) > 1: #We need desammutation
-                if 'pawn' not in piece:
-                    pdb.set_trace()
                 if len(set(pos[0] for pos in candidates)) == 1: #Check if the pieces are in the same column
                     movement += initial_position[1] #Disambiguate by row
                 else: 
@@ -320,7 +352,6 @@ class ChessBoard:
             movement += 'x'
 
         return movement + end_position.lower()
-        
 
 if __name__ == '__main__':
     board = ChessBoard()
