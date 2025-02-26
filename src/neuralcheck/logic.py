@@ -220,7 +220,9 @@ class ChessBoard:
             i = 0
             while i < len(vectors):
                 dx, dy = vectors[i]            
-                if player_turn * self.board[x + i*dx, y + i*dy] > 0: #There is a piece of its own
+                if 0 > x + dx or x + dx >= 8 or 0 > y + dy or y + dy >= 8: #Out of border
+                    vectors = np.delete(vectors, i, axis=0)
+                elif player_turn * self.board[x + dx, y + dy] > 0: #There is a piece of its own
                     vectors = np.delete(vectors, i, axis=0)
                 else:
                     i += 1
@@ -412,7 +414,11 @@ class ChessBoard:
             end_position: A two-character string representing the destination position, e.g., 'f3'.
 
         """
-        #TODO finish
+        #TODO add en passant
+
+        stripped_play = play.replace('+', '').replace('#', '')
+        if 'O' not in stripped_play: #TODO add promotion condition
+            end_position = stripped_play[-2:]
 
         piece = 'white ' if white_player else 'black '
 
@@ -422,7 +428,7 @@ class ChessBoard:
             piece += 'queen'
         elif 'B' in play:
             piece += 'bishop'
-        elif 'B' in play:
+        elif 'N' in play:
             piece += 'knight'
         elif 'R' in play:
             piece += 'rook'
@@ -432,10 +438,19 @@ class ChessBoard:
             piece += 'king'
         else:
             piece += 'pawn'
+        #if 'N' in play:
+        #    breakpoint()
+        candidates = []
+        for initial_position, all_moves in self.possible_moves.items():
+            if end_position in all_moves:
+                candidates.append(initial_position)
 
-        piece = ''
-        initial_position = ''
-        end_position = play[-2:] #Solo si no es enroque, revisar
+        if len(candidates) == 1:
+            initial_position = candidates[0]
+        else: #BUG add desambiguation, here if there are more than one piece the last steps over the other
+            candidates = {self.what_in(position) : position for position in candidates}
+            initial_position = candidates[piece]
+
         return piece, initial_position, end_position
 
     def save_position(self, filename:str) -> None:
@@ -464,7 +479,7 @@ class ChessBoard:
         for position, piece in board.items():
             if position == "Playe's Turn":
                 continue
-            self.put(piece, position)
+            self.set_piece(piece, position)
 
         self.white_turn = board["Playe's Turn"] == 'white'
         self.bitboard = ChessBitboard(self.board)
