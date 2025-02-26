@@ -258,7 +258,7 @@ class ChessBitboard:
         """
         print(f"{num:#018x}".upper())
 
-    def move(self, order: str, white_player_turn: bool) -> None:
+    def make_move(self, order: str, white_player_turn: bool) -> None:
         """
         Processes a move order in algebraic notation (e.g., "Nf6") and updates the board bitboards accordingly.
 

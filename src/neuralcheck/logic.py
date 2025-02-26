@@ -21,8 +21,8 @@ class ChessBoard:
         self.history = []
         self.last_turn = ''
         self.load_position('config/initial_position.yaml') 
+        self.possible_moves = self.calculate_possible_moves()
         self.bitboard = ChessBitboard(self.board)
-
 
     def _initialize_resources(self) -> None:
         """
@@ -67,7 +67,7 @@ class ChessBoard:
         row = 8 - x
         return f'{col}{row}'
 
-    def put(self, piece:str, position:str) -> None:
+    def set_piece(self, piece:str, position:str) -> None:
         """
         Puts pieces in the numpy board representation using index
             Piece map:
@@ -134,7 +134,7 @@ class ChessBoard:
             in_coords[i] = self.array2logic(x, y)
         return in_coords
 
-    def check_or_mate(self) -> Tuple[int, Dict[str, List[str]], Dict[str, List[str]]]:
+    def assess_king_status(self) -> Tuple[int, Dict[str, List[str]], Dict[str, List[str]]]:
         """
         Search the position to check if the king is in checks or mated
 
@@ -237,7 +237,7 @@ class ChessBoard:
         
         x, y            = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
         position        = np.array([x, y])
-        #pdb.set_trace()
+        
         if 'king' in piece:
             piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1]])
             piece_moves = remove_illegal(x, y, piece_moves, is_king=True)
@@ -245,7 +245,7 @@ class ChessBoard:
             # El rey se ha movido antes: buscar en el historial
             # La torre se ha movido antes: buscar en el historial
             # Los espacios están libres: self.what_in == Empty
-            # El rey no está en Jaque -> self.check_or_mate = 0, _, _
+            # El rey no está en Jaque -> self.assess_king_status = 0, _, _
             # La torre no está siendo atacada
 
         elif 'queen' in piece:
@@ -270,6 +270,7 @@ class ChessBoard:
                     if self.board[x - 1, y - 1] < 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
                 if x == 1: #En passant TODO
+                    #self.last_turn chequear si la pieza hizo un movimiento amplio en el turno anterior
                     pass
 
             else: 
@@ -296,12 +297,12 @@ class ChessBoard:
 
         return legal_moves 
 
-    def all_raw_plausible_movements(self) -> Dict[str, str]:
+    def calculate_possible_moves(self) -> Dict[str, str]:
         """
         Calculates and updates all movements that each piece can perform
         """
-
-        self.plauble_movements = {}
+        #current_turn = self.w
+        possible_moves = {}
         for x in range(8):
             for y in range(8):
                 if self.board[x, y] != 0:
@@ -310,11 +311,11 @@ class ChessBoard:
                     position = self.array2logic(x,y)
                     movements = self.allowed_movements(piece, position)
                     if len(movements) > 0:
-                        self.plauble_movements[position] = movements
+                        possible_moves[position] = movements
 
-        return self.plauble_movements
+        return possible_moves
 
-    def move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
+    def make_move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
         """
         Executes a move if it is legal.
 
@@ -332,23 +333,24 @@ class ChessBoard:
         xe, ye = self.logic2array(end_position)
         
         if end_position in legal_movements:
-            movement = self.transcribe(piece, initial_position, end_position)
+            movement = self.notation_from_move(piece, initial_position, end_position)
             if 'x' in movement: #TODO add to captured pieces whatever in end_position
                 pass
-            self.last_turn = movement
-            self.put('Empty square', initial_position)
-            self.put(piece, end_position)
+            self.last_turn = [piece, movement] #Enables en passant
+            self.set_piece('Empty square', initial_position)
+            self.set_piece(piece, end_position)
             #TODO Agregar promoción de peones
             if self.white_turn:
                 self.history.append([movement])
             else:
                 self.history[-1].append(movement)
             self.white_turn = not self.white_turn
+            self.possible_moves = self.calculate_possible_moves()
             return True, movement
         else:
             return False, ''
             
-    def transcribe(self, piece: str, initial_position: str, end_position: str) -> str:
+    def notation_from_move(self, piece: str, initial_position: str, end_position: str) -> str:
         """
         Attempts to describe the move in chess notation. 
         For example, a knight moving to f6 -> "Nf6".
@@ -396,12 +398,13 @@ class ChessBoard:
 
         return movement + end_position.lower()
         
-    def read_move(self, play: str) -> Tuple[str, str, str]:
+    def read_move(self, play: str, white_player:bool) -> Tuple[str, str, str]:
         """
-        Transcribes a move from a chess like play
+        Transcribes a move from a chess like play to a triplet for the move method to execute
 
         Parameters:
             play: A chess like play, e.g., 'Nf3'
+            white_player: True if it is the white's player turn
         
         Returns:
             piece: A string representing the type of piece, e.g., 'knight', 'queen'.
@@ -410,9 +413,29 @@ class ChessBoard:
 
         """
         #TODO finish
+
+        piece = 'white ' if white_player else 'black '
+
+        if 'K' in play:
+            piece += 'king'
+        elif 'Q' in play:
+            piece += 'queen'
+        elif 'B' in play:
+            piece += 'bishop'
+        elif 'B' in play:
+            piece += 'knight'
+        elif 'R' in play:
+            piece += 'rook'
+        elif play == 'O-O':
+            piece += 'king'
+        elif play == 'O-O-O':
+            piece += 'king'
+        else:
+            piece += 'pawn'
+
         piece = ''
         initial_position = ''
-        end_position = ''
+        end_position = play[-2:] #Solo si no es enroque, revisar
         return piece, initial_position, end_position
 
     def save_position(self, filename:str) -> None:
@@ -465,12 +488,12 @@ class ChessBoard:
 
         for white_turn, black_turn in self.history: 
             piece, initial_position, end_position = self.read_move(white_turn)
-            self.move(piece, initial_position, end_position)
+            self.make_move(piece, initial_position, end_position)
             self.white_turn = False
             if black_turn is None:
                 break
             piece, initial_position, end_position = self.read_move(black_turn)
-            self.move(piece, initial_position, end_position)
+            self.make_move(piece, initial_position, end_position)
             self.white_turn = True
 
 if __name__ == '__main__':

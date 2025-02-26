@@ -9,7 +9,6 @@ import pdb
 #TODO : Agregar reloj
 #TODO : Agregar piezas capturadas
 #TODO : Agregar opción de girar el tablero
-#TODO : Agregar historial de acciones jugadas, en qué turno y por cuál jugf
 
 class ChessUI:
     def __init__(self, master, rotation):
@@ -68,7 +67,7 @@ class ChessUI:
     def send_text(self, event): #HACK Borrar en el futuro
             texto = self.entry.get().strip()  # Evitar entradas vacías
             if texto:
-                self.logicboard.bitboard.move(texto, self.logicboard.white_turn)
+                self.logicboard.bitboard.make_move(texto, self.logicboard.white_turn)
                 self.label.config(text=f"Texto enviado: {texto}")
                 self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
 
@@ -231,22 +230,17 @@ class ChessUI:
             piece = self.logicboard.what_in(target_position)
             if not 'Empty' in piece:
                 self.selected = (target_position, piece)
-#                self.board.delete("all")
-#                self.draw_board()
         else:
             piece_position, piece = self.selected
             self.selected = None
             if piece_position != target_position:
-                moved, movement = self.logicboard.move(piece, piece_position, target_position)
+                moved, movement = self.logicboard.make_move(piece, piece_position, target_position)
                 if moved:
-#                    self.board.delete("all")
-#                    self.draw_board() #Draw new position
                     self.add_move(movement) #Add move to history
                 else:
                     print("Movimiento inválido")
                     print("Los movimientos válidos son:")
                     print(self.logicboard.allowed_movements(piece, piece_position))
 
-#            else: #Deselect
         self.board.delete("all")
         self.draw_board()              
