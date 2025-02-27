@@ -18,8 +18,7 @@ class ChessBoard:
         #That level is syncronized with this for tracking pourpuses.
         
         self._initialize_resources()
-        self.history = []
-        self.last_turn = ''
+        self.clear_board()
         self.load_position('config/initial_position.yaml') 
         self.possible_moves = self.calculate_possible_moves()
         self.bitboard = ChessBitboard(self.board)
@@ -37,6 +36,22 @@ class ChessBoard:
         self.name2num['Empty square'] = 0
         self.num2name[0] = 'Empty square'
     
+    def clear_board(self) -> None:
+        """
+        Clears all history and pieces from the board
+        """
+        self.board = np.zeros((8,8), dtype=np.int64)
+        self.history = []
+        self.last_turn = ''
+        self.castle_flags = {
+            'white king moved': False,
+            'black king moved': False,
+            'a1 rook moved': False,
+            'h1 rook moved': False,
+            'a8 rook moved': False,
+            'h8 rook moved': False
+            }
+
     def logic2array(self, position:str) -> Tuple[int, int]:
         """
         Transforms a chess position to an index position fro drawing
@@ -176,6 +191,39 @@ class ChessBoard:
 
         return 0, enemy_movements
 
+    def assess_ataqued_squares(self, targets:List[str], white_turn:bool) -> np.array:
+        """
+        Assess if targets squares are ataqued by an enemy piece
+
+        Parameters:
+            targets: a list of positions to assess
+            white_turn: True is the calculations are done for white's player turn
+
+        Returns:
+            np.array: an array of boolean items checking for each square if it is attacked
+        """
+        #TODO finish
+        squares_status = [False]
+
+        return np.array(squares_status)
+
+    def assess_empty_squares(self, targets:List[str]) -> np.array:
+        """
+        Assess if targets squares are empty
+
+        Parameters:
+            targets: a list of positions to assess
+
+        Returns:
+            np.array: an array of boolean items checking for each square if it is attacked
+        """
+
+        squares_status = []
+        for square in targets:
+            squares_status.append('Empty' in self.what_in(square))
+
+        return np.array(squares_status)
+
     def allowed_movements(self, piece:str, position:str, in_check:bool=False) -> List[str]:
         """
         Calculates all legal movements of the piece.
@@ -188,7 +236,7 @@ class ChessBoard:
         Returns:
             List[str]: a list with all legal movements of the piece in chess-like format
         """
-        def raycast(x:int, y:int, vectors:np.array) -> np.array:
+        def raycast(x:int, y:int, vectors:np.array, white_turn:bool) -> np.array:
             """
             Calculate a raycast of the piece from direction vectors stoping when an obstacule is founded
 
@@ -196,27 +244,42 @@ class ChessBoard:
                 x: x position in the board of the piece
                 y: y position in the board of the piece
                 vectors: an array with all plausible directions for the piece to go
+                white_turn: True is the calculations are done for white's player turn
 
             Returns
                 np.array: an array with all posible directions to travel acording to rules
             """
             moves = np.empty((0, 2), dtype=np.int64)
-            player_turn = 1 if self.white_turn else -1
+            player_turn = 1 if white_turn else -1
             for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
                 for i in range(1, 8): #We advance i units in the desired direction and check for obstacles at each step.
-                    if 0 < x + i*dx and x + i*dx < 8 and 0 < y + i*dy and y + i*dy < 8: #Ensure movement stays within the board
+                    if 0 <= x + i*dx and x + i*dx < 8 and 0 <= y + i*dy and y + i*dy < 8: #Ensure movement stays within the board
                         if player_turn * self.board[x + i*dx, y + i*dy] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
                             moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
                             if player_turn * self.board[x + i*dx, y + i*dy] < 0: #Stops, but allows capturing.
                                 break
                         else: #Encounter a piece of the same color; stops immediately.
                             break
+                    else: #Stops searching off the board
+                        break
             return moves
         
-        def remove_illegal(x:int, y:int, vectors:np.array, is_king:bool=False) -> np.array:
-            #NOTE el rey no se puede mover donde otras piezas lo estén atacando
-            #TODO chequear que la pieza no esté pinneada al rey
-            player_turn = 1 if self.white_turn else -1
+        def remove_illegal(x:int, y:int, vectors:np.array, in_check:bool, white_turn:bool, is_king:bool=False) -> np.array:
+            """
+            Attempts to remove ilegal moves tha could be in from raw initial movements
+
+            Parameters:
+                x: x position in the board of the piece
+                y: y position in the board of the piece
+                vectors: an array with all plausible directions for the piece to go
+                in_check: there is a check to the king
+                white_turn: True is the calculations are done for white's player turn
+
+            Returns
+                np.array: an array with all posible directions to travel acording to rules
+            """
+            
+            player_turn = 1 if white_turn else -1
             i = 0
             while i < len(vectors):
                 dx, dy = vectors[i]            
@@ -226,40 +289,68 @@ class ChessBoard:
                     vectors = np.delete(vectors, i, axis=0)
                 else:
                     i += 1
+            
+            if is_king:
+                king_moved = self.castle_flags['white king moved' if white_turn else 'black king moved']
+
+                if in_check or king_moved:
+                    vectors = vectors[:-2] #Erases last two movements that are meant for casteling
+                elif (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']): #Removes Long Castle
+                    vectors = vectors[:-1]
+                elif (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']): #Removes Short Castle
+                    vectors = np.delete(vectors, 8, axis=0)
+                elif white_turn and self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
+                    vectors = vectors[:-1]
+                elif white_turn and self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
+                    vectors = np.delete(vectors, 8, axis=0)
+                elif not white_turn and self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
+                    vectors = vectors[:-1]
+                elif not white_turn and self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
+                    vectors = np.delete(vectors, 8, axis=0)
+                #elif white_turn and self.assess_ataqued_squares(['f1', 'g1', 'h1']).astype(int).sum() < 3: #Not unatacked squares -> Removes Short Castle TODO finish
+
+                i = 0
+                while i < len(vectors): #Only move to not ataqued squares
+                    dx, dy = vectors[i]
+                    position = self.array2logic(x + dx, y + dx)
+                    if self.assess_ataqued_squares([position])[0]: #FIXME finish assess_ataqued_squares
+                        vectors = np.delete(vectors, i, axis=0)
+                    else:
+                        i += 1
+
+            elif in_check:
+                #TODO Chek if the piece can block the check
+                pass
+            else:
+                #TODO Chek that the piece is not pinned to the king
+                pass
+            
             return vectors
 
         #NOTE si el rey está en jaque las únicas piezas que se pueden mover son el mismo, y aquellas que lo protejen
-        if 'black' in piece and self.white_turn:
-            return []
-        if 'white' in piece and not self.white_turn:
-            return []
         
         line_vectors        = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]])
         diagonal_vectors    = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]])
-        
-        x, y            = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
-        position        = np.array([x, y])
-        
+        x, y                = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
+        position            = np.array([x, y])
+        white_turn          = 'white' in piece
+
         if 'king' in piece:
-            piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1]])
-            piece_moves = remove_illegal(x, y, piece_moves, is_king=True)
-            # TODO agregar enroque
-            # El rey se ha movido antes: buscar en el historial
-            # La torre se ha movido antes: buscar en el historial
-            # Los espacios están libres: self.what_in == Empty
-            # El rey no está en Jaque -> self.assess_king_status = 0, _, _
-            # La torre no está siendo atacada
+            piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1], [0,2], [0,-2]])
+            piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn, is_king=True)
 
         elif 'queen' in piece:
             all_vectors = np.concatenate((line_vectors, diagonal_vectors))
-            piece_moves = raycast(x, y, all_vectors)
+            piece_moves = raycast(x, y, all_vectors, white_turn)
         elif 'bishop' in piece:
-            piece_moves = raycast(x, y, diagonal_vectors)
+            #if x == 3 and y == 1:
+                #breakpoint()
+            piece_moves = raycast(x, y, diagonal_vectors, white_turn)
         elif 'knight' in piece:
             piece_moves = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]]) 
-            piece_moves = remove_illegal(x, y, piece_moves)
+            piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn)
         elif 'rook' in piece:
-            piece_moves = raycast(x, y, diagonal_vectors)
+            piece_moves = raycast(x, y, diagonal_vectors, white_turn)
         elif 'pawn' in piece:             
             if self.white_turn: 
                 piece_moves = np.array([[-1, 0]])
@@ -287,12 +378,11 @@ class ChessBoard:
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
                 if x == 6: #En passant TODO
                     pass
+            #piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn) #TODO Test this
         else:
             piece_moves = np.array([[0,0]])
 
         destinations    = position + piece_moves
-        mask            = np.all((destinations >= 0) & (destinations <= 7), axis=1) #Remove moves that go off the board
-        destinations    = destinations[mask]
         legal_moves = [''] * len(destinations)
         for i, (x, y) in enumerate(destinations):
             legal_moves [i] = self.array2logic(x, y)
@@ -330,10 +420,7 @@ class ChessBoard:
             True if the move is legal and successfully executed, False otherwise.
         """        
         legal_movements = self.allowed_movements(piece, initial_position) #TODO reduce legal movements for check and pinned pieces
-        
-        xi, yi = self.logic2array(initial_position)
-        xe, ye = self.logic2array(end_position)
-        
+                
         if end_position in legal_movements:
             movement = self.notation_from_move(piece, initial_position, end_position)
             if 'x' in movement: #TODO add to captured pieces whatever in end_position
@@ -346,6 +433,22 @@ class ChessBoard:
                 self.history.append([movement])
             else:
                 self.history[-1].append(movement)
+            
+            if 'K' in movement:
+                if self.white_turn:
+                    self.castle_flags['white king moved'] = True
+                else:
+                    self.castle_flags['black king moved'] = True
+            elif 'R' in movement:
+                if initial_position == 'a1':
+                    self.castle_flags['a1 rook moved'] = True
+                elif initial_position == 'h1':
+                    self.castle_flags['h1 rook moved'] = True
+                elif initial_position == 'a8':
+                    self.castle_flags['a8 rook moved'] = True
+                elif initial_position == 'h8':
+                    self.castle_flags['h8 rook moved'] = True
+
             self.white_turn = not self.white_turn
             self.possible_moves = self.calculate_possible_moves()
             return True, movement
@@ -402,11 +505,12 @@ class ChessBoard:
         
     def read_move(self, play: str, white_player:bool) -> Tuple[str, str, str]:
         """
-        Transcribes a move from a chess like play to a triplet for the move method to execute
+        Transcribes a move from a chess like play to a triplet for the move method to execute.
+        This method does the convertion without cheking if it is legal (castle).
 
         Parameters:
             play: A chess like play, e.g., 'Nf3'
-            white_player: True if it is the white's player turn
+            white_turn: True is the calculations are done for white's player turn
         
         Returns:
             piece: A string representing the type of piece, e.g., 'knight', 'queen'.
@@ -415,10 +519,32 @@ class ChessBoard:
 
         """
         #TODO add en passant
+        #TODO add castle
+        #TODO add promotion
 
         stripped_play = play.replace('+', '').replace('#', '')
         if 'O' not in stripped_play: #TODO add promotion condition
             end_position = stripped_play[-2:]
+        elif 'O-O' in play: #Short Castle, it doesn't check if the movement is permited
+            if white_player:
+                piece = 'white king'
+                initial_position = 'e1'
+                end_position = 'g1'
+            else:
+                piece = 'black king'
+                initial_position = 'e8'
+                end_position = 'g8'
+            return piece, initial_position, end_position
+        elif 'O-O-O' in play:
+            if white_player:
+                piece = 'white king'
+                initial_position = 'e1'
+                end_position = 'c1'
+            else:
+                piece = 'black king'
+                initial_position = 'e8'
+                end_position = 'c8'
+            return piece, initial_position, end_position
 
         piece = 'white ' if white_player else 'black '
 
@@ -432,24 +558,23 @@ class ChessBoard:
             piece += 'knight'
         elif 'R' in play:
             piece += 'rook'
-        elif play == 'O-O':
-            piece += 'king'
-        elif play == 'O-O-O':
-            piece += 'king'
         else:
             piece += 'pawn'
-        #if 'N' in play:
-        #    breakpoint()
+
         candidates = []
         for initial_position, all_moves in self.possible_moves.items():
             if end_position in all_moves:
                 candidates.append(initial_position)
+        #if 'Ba4' in play:
+        #    breakpoint()
 
         if len(candidates) == 1:
             initial_position = candidates[0]
         else: #BUG add desambiguation, here if there are more than one piece the last steps over the other
             candidates = {self.what_in(position) : position for position in candidates}
             initial_position = candidates[piece]
+
+        # TODO check for check or mate
 
         return piece, initial_position, end_position
 
@@ -475,7 +600,7 @@ class ChessBoard:
         with open(filename, "r", encoding="utf-8") as file:
             board = yaml.safe_load(file)
 
-        self.board = np.zeros((8,8), dtype=np.int64)
+        self.clear_board()
         for position, piece in board.items():
             if position == "Playe's Turn":
                 continue
@@ -498,6 +623,7 @@ class ChessBoard:
         with open(filename, "r", encoding="utf-8") as file:
             history = yaml.safe_load(file)
 
+        self.clear_board()
         self.history = history
         self.load_position('config/initial_position.yaml')
 
@@ -510,6 +636,7 @@ class ChessBoard:
             piece, initial_position, end_position = self.read_move(black_turn)
             self.make_move(piece, initial_position, end_position)
             self.white_turn = True
+        self.bitboard = ChessBitboard(self.board)
 
 if __name__ == '__main__':
     board = ChessBoard()
