@@ -364,16 +364,16 @@ class ChessBoard:
             piece_moves = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]]) 
             piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn)
         elif 'rook' in piece:
-            piece_moves = raycast(x, y, diagonal_vectors, white_turn)
+            piece_moves = raycast(x, y, line_vectors, white_turn)
         elif 'pawn' in piece:             
             if self.white_turn: 
                 piece_moves = np.array([[-1, 0]])
                 if x == 6: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
-                if y + 1 < 8 and x - 1 > 0:
+                if y + 1 < 8 and x - 1 >= 0:
                     if self.board[x - 1, y + 1] < 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, 1]])))
-                if y - 1 > 0 and x - 1 > 0:
+                if y - 1 >= 0 and x - 1 >= 0:
                     if self.board[x - 1, y - 1] < 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
                 if x == 1: #En passant TODO
@@ -387,7 +387,7 @@ class ChessBoard:
                 if y + 1 < 8 and x + 1 < 8:
                     if self.board[x + 1, y + 1] > 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[1, 1]])))
-                if y - 1 > 0 and x + 1 < 8:
+                if y - 1 >= 0 and x + 1 < 8:
                     if self.board[x + 1, y - 1] > 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
                 if x == 6: #En passant TODO
@@ -396,18 +396,16 @@ class ChessBoard:
         else:
             piece_moves = np.array([[0,0]])
 
-        destinations    = position + piece_moves
+        destinations = position + piece_moves
         legal_moves = [''] * len(destinations)
-        for i, (x, y) in enumerate(destinations):
-            if 'king' in piece and np.abs(y) == 2:
-                if y > 0:
-                    legal_moves[i] = 'O-O'
-                else:
-                    legal_moves[i] = 'O-O-O'
+        for i, (dest_x, dest_y) in enumerate(destinations):
+            move_vector = piece_moves[i]
+            if 'king' in piece and move_vector[0] == 0 and abs(move_vector[1]) == 2:
+                legal_moves[i] = self.array2logic(dest_x, dest_y)
             else:
-                legal_moves[i] = self.array2logic(x, y)
+                legal_moves[i] = self.array2logic(dest_x, dest_y)
 
-        return legal_moves 
+        return legal_moves
 
     def calculate_possible_moves(self) -> Dict[str, str]:
         """
@@ -456,14 +454,14 @@ class ChessBoard:
                     self.set_piece('white rook', 'f1')
                 else:
                     self.set_piece('Empty square', 'h8')
-                    self.set_piece('white rook', 'f8')
+                    self.set_piece('black rook', 'f8')
             if movement == 'O-O-O': #Same
                 if self.white_turn:
                     self.set_piece('Empty square', 'a1')
                     self.set_piece('white rook', 'd1')
                 else:
                     self.set_piece('Empty square', 'a8')
-                    self.set_piece('white rook', 'd8')
+                    self.set_piece('black rook', 'd8')
             
             #TODO Agregar promoción de peones
             if self.white_turn:
@@ -530,20 +528,25 @@ class ChessBoard:
         elif 'rook' in piece:
             movement += 'R'
 
-        same_piece = self.search_for(piece) #Check all pieces of the same type to the current piece
-        if len(same_piece) > 1: #If there are other pieces            
-            candidates = []
-            for position in same_piece:
-                if end_position in self.allowed_movements(piece, position): #FIXME En el caso de los peones hay que ver si ellos se pueden mover solo capturando.  hay que arreglar este método, probablemente haya que agregar la posición final para que pueda chequear si el peon puede llegar capturando
-                    candidates.append(position)
-            if len(candidates) > 1: #We need desammutation
-                if len(set(pos[0] for pos in candidates)) == 1: #Check if the pieces are in the same column
-                    movement += initial_position[1] #Disambiguate by row
-                else: 
-                    movement += initial_position[0] #Disambiguate by column
-
-        if 'Empty' not in self.what_in(end_position):
-            movement += 'x'
+        disambiguation = ''
+        if 'pawn' not in piece:
+            same_piece = self.search_for(piece) #Check all pieces of the same type to the current piece
+            other_candidates = [pos for pos in same_piece if pos != initial_position and 
+                                end_position in self.allowed_movements(piece, pos)]
+        
+            if other_candidates: #We need disambiguation
+                if len(set(pos[0] for pos in other_candidates + [initial_position])) == 1: #Check if the pieces are in the same column
+                    disambiguation = initial_position[1] #Disambiguate by row
+                else:
+                    disambiguation = initial_position[0] #Disambiguate by column
+        
+        if 'Empty' not in self.what_in(end_position): #Another piece in destiny -> capture
+            if 'pawn' in piece:
+                movement = initial_position[0] #For pawns, when capturing we must put the letter of the origin column
+            movement += disambiguation + 'x'
+        else:
+            if 'pawn' not in piece: #For non pawns pieces we add the disambiguation if it exists
+                movement += disambiguation
 
         return movement + end_position.lower()
         
@@ -569,6 +572,16 @@ class ChessBoard:
         stripped_play = play.replace('+', '').replace('#', '')
         if 'O' not in stripped_play: #TODO add promotion condition
             end_position = stripped_play[-2:]
+        elif 'O-O-O' in play: #Long castle, first this beacuse 'O-O' is contained in 'O-O-O'
+            if white_player:
+                piece = 'white king'
+                initial_position = 'e1'
+                end_position = 'c1'
+            else:
+                piece = 'black king'
+                initial_position = 'e8'
+                end_position = 'c8'
+            return piece, initial_position, end_position
         elif 'O-O' in play: #Short Castle, it doesn't check if the movement is permited
             if white_player:
                 piece = 'white king'
@@ -578,16 +591,6 @@ class ChessBoard:
                 piece = 'black king'
                 initial_position = 'e8'
                 end_position = 'g8'
-            return piece, initial_position, end_position
-        elif 'O-O-O' in play:
-            if white_player:
-                piece = 'white king'
-                initial_position = 'e1'
-                end_position = 'c1'
-            else:
-                piece = 'black king'
-                initial_position = 'e8'
-                end_position = 'c8'
             return piece, initial_position, end_position
 
         piece = 'white ' if white_player else 'black '
@@ -606,17 +609,26 @@ class ChessBoard:
             piece += 'pawn'
 
         candidates = []
-        for initial_position, all_moves in self.possible_moves.items():
-            if end_position in all_moves:
-                candidates.append(initial_position)
-        #if 'Ba4' in play:
-        #    breakpoint()
+        for position, moves in self.possible_moves.items():
+            if end_position in moves and self.what_in(position) == piece:
+                candidates.append(position)
+
+        if not candidates: #If last filter was too much, FIXME check if this is ncessesary when last test is complete
+            for pos, moves in self.possible_moves.items():
+                if end_position in moves:
+                    candidates.append(pos)
 
         if len(candidates) == 1:
             initial_position = candidates[0]
-        else: #BUG add desambiguation, here if there are more than one piece the last steps over the other
-            candidates = {self.what_in(position) : position for position in candidates}
-            initial_position = candidates[piece]
+        else: 
+            if 'pawn' in piece: #Pawn disambiguation
+                for candidate in candidates:
+                    if candidate[0] == play[0]:
+                        initial_position = candidate
+                        break
+            else:
+                candidates_dict = {self.what_in(position) : position for position in candidates}
+                initial_position = candidates_dict.get(piece, candidates[0])
 
         # TODO check for check or mate
 
