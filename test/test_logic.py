@@ -2,29 +2,39 @@ import os
 import random
 import yaml
 from src.neuralcheck.logic import ChessBoard
-import pdb
 
-
-def test_read_move(filename):
+def test_read_move(**kwargs):
     path = 'test/test_games'
-    archivos = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-    archivo_seleccionado = random.choice(archivos)
-    if filename is None: 
+    filename = kwargs.get("filename", None)
+    history = kwargs.get("history", [])
+
+    #Si recibí un filename uso eso
+    #Si no recibí un filename veo si tengo un history
+    #Si no tengo ninguno carga uno aleatorio
+
+    if filename is not None:
+        if path not in filename:
+            filename = os.path.join(path, filename)
+        with open(filename, "r", encoding="utf-8") as file:
+            history = yaml.safe_load(file)
+
+    elif len(history) == 0:
+        archivos = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+        archivo_seleccionado = random.choice(archivos)
         filename = os.path.join(path, archivo_seleccionado)
-    elif path not in filename:
-        filename = os.path.join(path, filename)
+        with open(filename, "r", encoding="utf-8") as file:
+            history = yaml.safe_load(file)
     
-    with open(filename, "r", encoding="utf-8") as file:
-        history = yaml.safe_load(file)
-        if len(history[-1]) == 1:
-            history[-1].append('quit')
+    if len(history[-1]) == 1:
+            history[-1].append('quit')    
+    
     board = ChessBoard()
     print(f'Testing {filename}')
-    #pdb.set_trace()
     for white_move, black_move in history:
         print(f'Attempting to do {white_move} in {"white" if board.white_turn else "black"} turn')
         piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
         result, notation = board.make_move(piece, initial_position, end_position)
+        assert notation == white_move, 'Error, movimiento no corresponde, buscar ambigüedades'
         if result:
             print(f'{notation} success!')
         else:
@@ -35,6 +45,7 @@ def test_read_move(filename):
         print(f'Attempting to do {black_move} in {"white" if board.white_turn else "black"} turn')
         piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
         result, notation = board.make_move(piece, initial_position, end_position)
+        assert notation == black_move, 'Error, movimiento no corresponde, buscar ambigüedades'
         if result:
             print(f'{notation} success!')
         else:
@@ -55,12 +66,23 @@ array([[-4,  0, -3, -5, -6,  0, -2, -4],
        [ 4,  2,  3,  5,  6,  0,  0,  4]])
 """
 
-def check_for(promotion=False, ambiguity=False, enpassant=False, scastle=False, lcastle=False, move=None):
+def check_for(**kwargs):
     path = 'test/test_games'
     archivos = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
     pieces = ['K', 'Q', 'B', 'N', 'R']
     cols = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
     rows = ['1', '2', '3', '4', '5', '6', '7', '8']
+    promotion = kwargs.get('promotion', False)
+    ambiguity = kwargs.get('ambiguity', False)
+    enpassant = kwargs.get('enpassant', False)
+    scastle = kwargs.get('scastle', False)
+    lcastle = kwargs.get('lcastle', False)
+    move = kwargs.get('move', False)
+    check_list = kwargs.get('check_list', [])
+
+    if len(check_list) > 0:
+        archivos = check_list
+    
     interesting = []
     not_interesting = []
     for archivo in archivos:
@@ -71,7 +93,6 @@ def check_for(promotion=False, ambiguity=False, enpassant=False, scastle=False, 
                 history[-1].append('q')
         for white_move, black_move in history:
             if scastle and (white_move == 'O-O' or black_move == 'O-O') and archivo not in interesting:
-                #breakpoint()
                 interesting.append(archivo)
             elif lcastle and (white_move == 'O-O-O' or black_move == 'O-O-O') and archivo not in interesting:
                 interesting.append(archivo)
@@ -85,8 +106,9 @@ def check_for(promotion=False, ambiguity=False, enpassant=False, scastle=False, 
                 if white_move[-1] == '4' and black_move_stripped[-1] == '3' and black_move[0] not in pieces:
                     interesting.append(archivo) #Idem
             elif ambiguity and archivo not in interesting:
-                white_move_stripped = white_move.replace('+', '').replace('#', '').replace('x', '')
-                black_move_stripped = black_move.replace('+', '').replace('#', '').replace('x', '')
+                #breakpoint()
+                white_move_stripped = white_move.replace('+', '').replace('#', '')#.replace('x', '')
+                black_move_stripped = black_move.replace('+', '').replace('#', '')#.replace('x', '')
                 if len(white_move_stripped) > 2:
                     if white_move_stripped[-3] in cols or white_move_stripped[-3] in rows:
                         interesting.append(archivo)
@@ -106,5 +128,39 @@ def check_for(promotion=False, ambiguity=False, enpassant=False, scastle=False, 
         not_interesting.append(archivo)
 
     return interesting, not_interesting
+
+def check_database():
+    from prettytable import PrettyTable
+    tabla = PrettyTable()
+    tabla.field_names = ['Feature', 'Contiene', 'No contiene', 'Total']
+    co, nc = check_for(promotion=True)
+    tabla.add_row(['promotion', len(co), len(nc), len(co) + len(nc)])
+    co, nc = check_for(ambiguity=True)
+    tabla.add_row(['ambiguity', len(co), len(nc), len(co) + len(nc)])
+    co, nc = check_for(enpassant=True)
+    tabla.add_row(['enpassant', len(co), len(nc), len(co) + len(nc)])
+    co, nc = check_for(scastle=True)
+    tabla.add_row(['scastle', len(co), len(nc), len(co) + len(nc)])
+    co, nc = check_for(lcastle=True)
+    tabla.add_row(['lcastle', len(co), len(nc), len(co) + len(nc)])
+
+    print(tabla)
+
+
 #from test.test_logic import *
 #interesting, not_interesting = check_for(promotion=True, ambiguity=True, enpassant=True, scastle=True, lcastle=True)
+"""
+from test.test_logic import *
+interesting, not_interesting = check_for(ambiguity=True)
+interesting, not_interesting = check_for(scastle=True, check_list=not_interesting)
+#board = test_read_move(history=[['c4', 'e5'], ['Nc3', 'Nc6'], ['d3', 'a6'], ['e4', 'Bc5'], ['Nge2', 'd6'], ['Ng3', 'Nge7'], ['Be2']])
+board = test_read_move(history=[['e4', 'c6'], ['d4', 'Nf6'], ['e5', 'Nd5'], ['Nf3', 'd6'], ['Be2', 'Qa5+'], ['c3', 'f6']])
+move = 'O-O'
+piece, initial_position, end_position = board.read_move(move, board.white_turn)
+result, notation = board.make_move(piece, initial_position, end_position)
+        
+board = ChessBoard()
+board = test_read_move(filename=interesting[0])
+"""
+#Ambigüedad test_read_move(filename='test/test_games\Apertura Inglesa - 0-1 - n°1.yaml')
+#check_for(check_list=['Apertura Inglesa - 0-1 - n°1.yaml'], ambiguity=True)

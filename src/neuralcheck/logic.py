@@ -1,4 +1,3 @@
-import pdb
 import numpy as np
 import bitboardops as bb
 import yaml
@@ -203,7 +202,14 @@ class ChessBoard:
             np.array: an array of boolean items checking for each square if it is attacked
         """
         #TODO finish
-        squares_status = [False]
+        squares_status = []
+        enemy_movements = {'a1': []}
+        #enemy_movements = self.calculate_possible_moves(not white_turn) -> Ampliar allowed_movements y calculate_possible_moves para que sean agnósticos del turno de self.whiteturn
+        for target in targets:
+            status = False
+            for _, moves in enemy_movements.items():
+                status = status or target in moves
+            squares_status.append(status)
 
         return np.array(squares_status)
 
@@ -291,29 +297,40 @@ class ChessBoard:
                     i += 1
             
             if is_king:
-                king_moved = self.castle_flags['white king moved' if white_turn else 'black king moved']
-
+                elements_to_remove = []
+                king_moved = self.castle_flags['white king moved' if white_turn else 'black king moved']                
                 if in_check or king_moved:
-                    vectors = vectors[:-2] #Erases last two movements that are meant for casteling
-                elif (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']): #Removes Long Castle
-                    vectors = vectors[:-1]
-                elif (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']): #Removes Short Castle
-                    vectors = np.delete(vectors, 8, axis=0)
-                elif white_turn and self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
-                    vectors = vectors[:-1]
-                elif white_turn and self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
-                    vectors = np.delete(vectors, 8, axis=0)
-                elif not white_turn and self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
-                    vectors = vectors[:-1]
-                elif not white_turn and self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
-                    vectors = np.delete(vectors, 8, axis=0)
-                #elif white_turn and self.assess_ataqued_squares(['f1', 'g1', 'h1']).astype(int).sum() < 3: #Not unatacked squares -> Removes Short Castle TODO finish
+                    elements_to_remove = [[0,2], [0,-2]] #Erases last two movements that are meant for casteling
+                if (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']): #Removes Long Castle
+                    if [0,-2] not in elements_to_remove:
+                        elements_to_remove.append([0,-2])
+                if (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']): #Removes Short Castle
+                    if [0,2] not in elements_to_remove:
+                        elements_to_remove.append([0,2])
+                if white_turn and self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
+                    if [0,-2] not in elements_to_remove:
+                        elements_to_remove.append([0,-2])
+                if white_turn and self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
+                    if [0,2] not in elements_to_remove:
+                        elements_to_remove.append([0,2])
+                if not white_turn and self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
+                    if [0,-2] not in elements_to_remove:
+                        elements_to_remove.append([0,-2])
+                if not white_turn and self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
+                    if [0,2] not in elements_to_remove:
+                        elements_to_remove.append([0,2])
+                #if white_turn and self.assess_ataqued_squares(['f1', 'g1', 'h1']).astype(int).sum() < 3: #Not unatacked squares -> Removes Short Castle TODO finish
+
+                for elem in elements_to_remove:
+                    indices = np.where((vectors == elem).all(axis=1))[0]
+                    if indices.size > 0:
+                        vectors = np.delete(vectors, indices, axis=0)
 
                 i = 0
                 while i < len(vectors): #Only move to not ataqued squares
                     dx, dy = vectors[i]
-                    position = self.array2logic(x + dx, y + dx)
-                    if self.assess_ataqued_squares([position])[0]: #FIXME finish assess_ataqued_squares
+                    position = self.array2logic(x + dx, y + dy)
+                    if self.assess_ataqued_squares([position], white_turn)[0]: #FIXME finish assess_ataqued_squares
                         vectors = np.delete(vectors, i, axis=0)
                     else:
                         i += 1
@@ -338,13 +355,10 @@ class ChessBoard:
         if 'king' in piece:
             piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1], [0,2], [0,-2]])
             piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn, is_king=True)
-
         elif 'queen' in piece:
             all_vectors = np.concatenate((line_vectors, diagonal_vectors))
             piece_moves = raycast(x, y, all_vectors, white_turn)
         elif 'bishop' in piece:
-            #if x == 3 and y == 1:
-                #breakpoint()
             piece_moves = raycast(x, y, diagonal_vectors, white_turn)
         elif 'knight' in piece:
             piece_moves = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]]) 
@@ -385,7 +399,13 @@ class ChessBoard:
         destinations    = position + piece_moves
         legal_moves = [''] * len(destinations)
         for i, (x, y) in enumerate(destinations):
-            legal_moves [i] = self.array2logic(x, y)
+            if 'king' in piece and np.abs(y) == 2:
+                if y > 0:
+                    legal_moves[i] = 'O-O'
+                else:
+                    legal_moves[i] = 'O-O-O'
+            else:
+                legal_moves[i] = self.array2logic(x, y)
 
         return legal_moves 
 
@@ -426,8 +446,25 @@ class ChessBoard:
             if 'x' in movement: #TODO add to captured pieces whatever in end_position
                 pass
             self.last_turn = [piece, movement] #Enables en passant
+            
             self.set_piece('Empty square', initial_position)
             self.set_piece(piece, end_position)
+            
+            if movement == 'O-O': #King movement is already done, we need to move the rook
+                if self.white_turn:
+                    self.set_piece('Empty square', 'h1')
+                    self.set_piece('white rook', 'f1')
+                else:
+                    self.set_piece('Empty square', 'h8')
+                    self.set_piece('white rook', 'f8')
+            if movement == 'O-O-O': #Same
+                if self.white_turn:
+                    self.set_piece('Empty square', 'a1')
+                    self.set_piece('white rook', 'd1')
+                else:
+                    self.set_piece('Empty square', 'a8')
+                    self.set_piece('white rook', 'd8')
+            
             #TODO Agregar promoción de peones
             if self.white_turn:
                 self.history.append([movement])
@@ -468,15 +505,22 @@ class ChessBoard:
         Returns:
             A string in standard chess notation representing the move.
         """ 
-        #TODO enroque corto
-        #TODO enroque largo
         #TODO jaque, y ojo, jaque a la descubierta
         #TODO mate
         #TODO promoción
+        #TODO en passant
         
         movement = ''
         if 'king' in piece:
             movement += 'K'
+            if initial_position == 'e1' and end_position == 'g1':
+                return 'O-O'
+            elif initial_position == 'e1' and end_position == 'c1':
+                return 'O-O-O'
+            elif initial_position == 'e8' and end_position == 'g8':
+                return 'O-O'
+            elif initial_position == 'e8' and end_position == 'c8':
+                return 'O-O-O'
         elif 'queen' in piece:
             movement += 'Q'
         elif 'bishop' in piece:
