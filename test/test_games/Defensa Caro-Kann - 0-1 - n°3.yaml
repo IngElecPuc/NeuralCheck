@@ -1,92 +1,184 @@
-- - e4
-  - e5
-- - Bc4
-  - Nf6
-- - Nc3
-  - Bc5
-- - Nf3
-  - d6
-- - d3
-  - O-O
-- - Bg5
-  - Nc6
-- - Nd5
-  - h6
-- - Bxf6
-  - gxf6
-- - Nh4
-  - f5
-- - Qh5
-  - Qg5
-- - Qxg5+
-  - hxg5
-- - Nxf5
-  - Bxf5
-- - exf5
-  - Nd4
-- - O-O-O
-  - Nxf5
-- - Nxc7
-  - Rac8
-- - Nd5
-  - Bxf2
-- - Rdf1
-  - Be3+
-- - Nxe3
-  - Nxe3
-- - Re1
-  - Nxc4
-- - dxc4
-  - Rxc4
-- - Rd1
-  - Rfc8
-- - c3
-  - R4c6
-- - Rd5
-  - Kf8
-- - Rhd1
-  - Ke7
-- - g4
-  - f6
-- - Kd2
-  - Rc5
-- - Rxc5
-  - dxc5
-- - Kc2
-  - Rd8
-- - Rxd8
-  - Kxd8
-- - c4
-  - Kd7
-- - Kd3
-  - Kd6
-- - Ke4
-  - Ke6
-- - h3
-  - b6
-- - a3
-  - a6
-- - b4
-  - cxb4
-- - axb4
-  - a5
-- - c5
-  - bxc5
-- - b5
-  - Kd6
-- - Kf5
-  - a4
-- - Kxf6
-  - a3
-- - Kxg5
-  - a2
-- - h4
-  - a1=Q
-- - h5
-  - Qc1+
-- - Kg6
-  - Qf4
-- - g5
-  - Ke6
-- - h6
-  - Qf7#
+- - - e4
+    - e5
+  - - rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+    - rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1
+- - - Bc4
+    - Nf6
+  - - rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2
+    - rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 2
+- - - Nc3
+    - Bc5
+  - - rnbqkb1r/pppp1ppp/5n2/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3
+    - rnbqkb1r/pppp1ppp/5n2/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 3 3
+- - - Nf3
+    - d6
+  - - rnbqk2r/pppp1ppp/5n2/2b1p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR w KQkq - 4 4
+    - rnbqk2r/pppp1ppp/5n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 5 4
+- - - d3
+    - O-O
+  - - rnbqk2r/ppp2ppp/3p1n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 5
+    - rnbqk2r/ppp2ppp/3p1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R b KQkq - 0 5
+- - - Bg5
+    - Nc6
+  - - rnbq1rk1/ppp2ppp/3p1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQ - 1 6
+    - rnbq1rk1/ppp2ppp/3p1n2/2b1p1B1/2B1P3/2NP1N2/PPP2PPP/R2QK2R b KQ - 2 6
+- - - Nd5
+    - h6
+  - - r1bq1rk1/ppp2ppp/2np1n2/2b1p1B1/2B1P3/2NP1N2/PPP2PPP/R2QK2R w KQ - 3 7
+    - r1bq1rk1/ppp2ppp/2np1n2/2bNp1B1/2B1P3/3P1N2/PPP2PPP/R2QK2R b KQ - 4 7
+- - - Bxf6
+    - gxf6
+  - - r1bq1rk1/ppp2pp1/2np1n1p/2bNp1B1/2B1P3/3P1N2/PPP2PPP/R2QK2R w KQ - 0 8
+    - r1bq1rk1/ppp2pp1/2np1B1p/2bNp3/2B1P3/3P1N2/PPP2PPP/R2QK2R b KQ - 0 8
+- - - Nh4
+    - f5
+  - - r1bq1rk1/ppp2p2/2np1p1p/2bNp3/2B1P3/3P1N2/PPP2PPP/R2QK2R w KQ - 0 9
+    - r1bq1rk1/ppp2p2/2np1p1p/2bNp3/2B1P2N/3P4/PPP2PPP/R2QK2R b KQ - 1 9
+- - - Qh5
+    - Qg5
+  - - r1bq1rk1/ppp2p2/2np3p/2bNpp2/2B1P2N/3P4/PPP2PPP/R2QK2R w KQ - 0 10
+    - r1bq1rk1/ppp2p2/2np3p/2bNpp1Q/2B1P2N/3P4/PPP2PPP/R3K2R b KQ - 1 10
+- - - Qxg5+
+    - hxg5
+  - - r1b2rk1/ppp2p2/2np3p/2bNppqQ/2B1P2N/3P4/PPP2PPP/R3K2R w KQ - 2 11
+    - r1b2rk1/ppp2p2/2np3p/2bNppQ1/2B1P2N/3P4/PPP2PPP/R3K2R b KQ - 0 11
+- - - Nxf5
+    - Bxf5
+  - - r1b2rk1/ppp2p2/2np4/2bNppp1/2B1P2N/3P4/PPP2PPP/R3K2R w KQ - 0 12
+    - r1b2rk1/ppp2p2/2np4/2bNpNp1/2B1P3/3P4/PPP2PPP/R3K2R b KQ - 0 12
+- - - exf5
+    - Nd4
+  - - r4rk1/ppp2p2/2np4/2bNpbp1/2B1P3/3P4/PPP2PPP/R3K2R w KQ - 0 13
+    - r4rk1/ppp2p2/2np4/2bNpPp1/2B5/3P4/PPP2PPP/R3K2R b KQ - 0 13
+- - - O-O-O
+    - Nxf5
+  - - r4rk1/ppp2p2/3p4/2bNpPp1/2Bn4/3P4/PPP2PPP/R3K2R w KQ - 1 14
+    - r4rk1/ppp2p2/3p4/2bNpPp1/2Bn4/3P4/PPP2PPP/2KR3R b - - 2 14
+- - - Nxc7
+    - Rac8
+  - - r4rk1/ppp2p2/3p4/2bNpnp1/2B5/3P4/PPP2PPP/2KR3R w - - 0 15
+    - r4rk1/ppN2p2/3p4/2b1pnp1/2B5/3P4/PPP2PPP/2KR3R b - - 0 15
+- - - Nd5
+    - Bxf2
+  - - 2r2rk1/ppN2p2/3p4/2b1pnp1/2B5/3P4/PPP2PPP/2KR3R w - - 1 16
+    - 2r2rk1/pp3p2/3p4/2bNpnp1/2B5/3P4/PPP2PPP/2KR3R b - - 2 16
+- - - Rdf1
+    - Be3+
+  - - 2r2rk1/pp3p2/3p4/3Npnp1/2B5/3P4/PPP2bPP/2KR3R w - - 0 17
+    - 2r2rk1/pp3p2/3p4/3Npnp1/2B5/3P4/PPP2bPP/2K2R1R b - - 1 17
+- - - Nxe3
+    - Nxe3
+  - - 2r2rk1/pp3p2/3p4/3Npnp1/2B5/3Pb3/PPP3PP/2K2R1R w - - 2 18
+    - 2r2rk1/pp3p2/3p4/4pnp1/2B5/3PN3/PPP3PP/2K2R1R b - - 0 18
+- - - Re1
+    - Nxc4
+  - - 2r2rk1/pp3p2/3p4/4p1p1/2B5/3Pn3/PPP3PP/2K2R1R w - - 0 19
+    - 2r2rk1/pp3p2/3p4/4p1p1/2B5/3Pn3/PPP3PP/2K1R2R b - - 1 19
+- - - dxc4
+    - Rxc4
+  - - 2r2rk1/pp3p2/3p4/4p1p1/2n5/3P4/PPP3PP/2K1R2R w - - 0 20
+    - 2r2rk1/pp3p2/3p4/4p1p1/2P5/8/PPP3PP/2K1R2R b - - 0 20
+- - - Rd1
+    - Rfc8
+  - - 5rk1/pp3p2/3p4/4p1p1/2r5/8/PPP3PP/2K1R2R w - - 0 21
+    - 5rk1/pp3p2/3p4/4p1p1/2r5/8/PPP3PP/2KR3R b - - 1 21
+- - - c3
+    - R4c6
+  - - 2r3k1/pp3p2/3p4/4p1p1/2r5/8/PPP3PP/2KR3R w - - 2 22
+    - 2r3k1/pp3p2/3p4/4p1p1/2r5/2P5/PP4PP/2KR3R b - - 0 22
+- - - Rd5
+    - Kf8
+  - - 2r3k1/pp3p2/2rp4/4p1p1/8/2P5/PP4PP/2KR3R w - - 1 23
+    - 2r3k1/pp3p2/2rp4/3Rp1p1/8/2P5/PP4PP/2K4R b - - 2 23
+- - - Rhd1
+    - Ke7
+  - - 2r2k2/pp3p2/2rp4/3Rp1p1/8/2P5/PP4PP/2K4R w - - 3 24
+    - 2r2k2/pp3p2/2rp4/3Rp1p1/8/2P5/PP4PP/2KR4 b - - 4 24
+- - - g4
+    - f6
+  - - 2r5/pp2kp2/2rp4/3Rp1p1/8/2P5/PP4PP/2KR4 w - - 5 25
+    - 2r5/pp2kp2/2rp4/3Rp1p1/6P1/2P5/PP5P/2KR4 b - - 0 25
+- - - Kd2
+    - Rc5
+  - - 2r5/pp2k3/2rp1p2/3Rp1p1/6P1/2P5/PP5P/2KR4 w - - 0 26
+    - 2r5/pp2k3/2rp1p2/3Rp1p1/6P1/2P5/PP1K3P/3R4 b - - 1 26
+- - - Rxc5
+    - dxc5
+  - - 2r5/pp2k3/3p1p2/2rRp1p1/6P1/2P5/PP1K3P/3R4 w - - 2 27
+    - 2r5/pp2k3/3p1p2/2R1p1p1/6P1/2P5/PP1K3P/3R4 b - - 0 27
+- - - Kc2
+    - Rd8
+  - - 2r5/pp2k3/5p2/2p1p1p1/6P1/2P5/PP1K3P/3R4 w - - 0 28
+    - 2r5/pp2k3/5p2/2p1p1p1/6P1/2P5/PPK4P/3R4 b - - 1 28
+- - - Rxd8
+    - Kxd8
+  - - 3r4/pp2k3/5p2/2p1p1p1/6P1/2P5/PPK4P/3R4 w - - 2 29
+    - 3R4/pp2k3/5p2/2p1p1p1/6P1/2P5/PPK4P/8 b - - 0 29
+- - - c4
+    - Kd7
+  - - 3k4/pp6/5p2/2p1p1p1/6P1/2P5/PPK4P/8 w - - 0 30
+    - 3k4/pp6/5p2/2p1p1p1/2P3P1/8/PPK4P/8 b - - 0 30
+- - - Kd3
+    - Kd6
+  - - 8/pp1k4/5p2/2p1p1p1/2P3P1/8/PPK4P/8 w - - 1 31
+    - 8/pp1k4/5p2/2p1p1p1/2P3P1/3K4/PP5P/8 b - - 2 31
+- - - Ke4
+    - Ke6
+  - - 8/pp6/3k1p2/2p1p1p1/2P3P1/3K4/PP5P/8 w - - 3 32
+    - 8/pp6/3k1p2/2p1p1p1/2P1K1P1/8/PP5P/8 b - - 4 32
+- - - h3
+    - b6
+  - - 8/pp6/4kp2/2p1p1p1/2P1K1P1/8/PP5P/8 w - - 5 33
+    - 8/pp6/4kp2/2p1p1p1/2P1K1P1/7P/PP6/8 b - - 0 33
+- - - a3
+    - a6
+  - - 8/p7/1p2kp2/2p1p1p1/2P1K1P1/7P/PP6/8 w - - 0 34
+    - 8/p7/1p2kp2/2p1p1p1/2P1K1P1/P6P/1P6/8 b - - 0 34
+- - - b4
+    - cxb4
+  - - 8/8/pp2kp2/2p1p1p1/2P1K1P1/P6P/1P6/8 w - - 0 35
+    - 8/8/pp2kp2/2p1p1p1/1PP1K1P1/P6P/8/8 b - - 0 35
+- - - axb4
+    - a5
+  - - 8/8/pp2kp2/4p1p1/1pP1K1P1/P6P/8/8 w - - 0 36
+    - 8/8/pp2kp2/4p1p1/1PP1K1P1/7P/8/8 b - - 0 36
+- - - c5
+    - bxc5
+  - - 8/8/1p2kp2/p3p1p1/1PP1K1P1/7P/8/8 w - - 0 37
+    - 8/8/1p2kp2/p1P1p1p1/1P2K1P1/7P/8/8 b - - 0 37
+- - - b5
+    - Kd6
+  - - 8/8/4kp2/p1p1p1p1/1P2K1P1/7P/8/8 w - - 0 38
+    - 8/8/4kp2/pPp1p1p1/4K1P1/7P/8/8 b - - 0 38
+- - - Kf5
+    - a4
+  - - 8/8/3k1p2/pPp1p1p1/4K1P1/7P/8/8 w - - 1 39
+    - 8/8/3k1p2/pPp1pKp1/6P1/7P/8/8 b - - 2 39
+- - - Kxf6
+    - a3
+  - - 8/8/3k1p2/1Pp1pKp1/p5P1/7P/8/8 w - - 0 40
+    - 8/8/3k1K2/1Pp1p1p1/p5P1/7P/8/8 b - - 0 40
+- - - Kxg5
+    - a2
+  - - 8/8/3k1K2/1Pp1p1p1/6P1/p6P/8/8 w - - 0 41
+    - 8/8/3k4/1Pp1p1K1/6P1/p6P/8/8 b - - 0 41
+- - - h4
+    - a1=Q
+  - - 8/8/3k4/1Pp1p1K1/6P1/7P/p7/8 w - - 0 42
+    - 8/8/3k4/1Pp1p1K1/6PP/8/p7/8 b - - 0 42
+- - - h5
+    - Qc1+
+  - - 8/8/3k4/1Pp1p1K1/6PP/8/8/q7 w - - 0 43
+    - 8/8/3k4/1Pp1p1KP/6P1/8/8/q7 b - - 0 43
+- - - Kg6
+    - Qf4
+  - - 8/8/3k4/1Pp1p1KP/6P1/8/8/2q5 w - - 1 44
+    - 8/8/3k2K1/1Pp1p2P/6P1/8/8/2q5 b - - 2 44
+- - - g5
+    - Ke6
+  - - 8/8/3k2K1/1Pp1p2P/5qP1/8/8/8 w - - 3 45
+    - 8/8/3k2K1/1Pp1p1PP/5q2/8/8/8 b - - 0 45
+- - - h6
+    - Qf7#
+  - - 8/8/4k1K1/1Pp1p1PP/5q2/8/8/8 w - - 1 46
+    - 8/8/4k1KP/1Pp1p1P1/5q2/8/8/8 b - - 0 46

@@ -694,6 +694,71 @@ class ChessBoard:
             self.white_turn = True
         self.bitboard = ChessBitboard(self.board)
 
+    def fen2numpy(self, fen:str) -> np.array:
+        """
+        Converts a fen position to a numpy array
+        
+        Parameters:
+            fen: a string with a fen format
+
+        Returns:
+            np.array: an array with a ChessBoard-like format for the board
+        """
+
+        mapping = {
+            'K': 6, 'Q': 5, 'R': 4, 'B': 3, 'N': 2, 'P': 1,
+            'k': -6, 'q': -5, 'r': -4, 'b': -3, 'n': -2, 'p': -1
+        }
+        
+        position = fen.split(' ')[0] #The first field is the position itself
+        
+        board = []
+        for row in position.split('/'): #Rows are separated by /
+            current_row = []
+            for char in row:
+                if char.isdigit():
+                    current_row.extend([0] * int(char)) #Digits are for empty squares
+                else:
+                    current_row.append(mapping[char])
+            board.append(current_row)
+        
+        return np.array(board)
+    
+    def numpy2fen(self, board:np.array) -> str:
+        """
+        Converts a numpy array to a fen position
+        
+        Parameters:
+            board: an array with a ChessBoard-like format for the board
+
+        Returns:
+            str: a string with a fen format
+        """
+
+        mapping = {
+        6: 'K', 5: 'Q', 4: 'R', 3: 'B', 2: 'N', 1: 'P',
+        -6: 'k', -5: 'q', -4: 'r', -3: 'b', -2: 'n', -1: 'p'
+        }
+        fen_rows = []
+        
+        for row in board:
+            fen_row = ''
+            empty_count = 0
+            for square in row:
+                if square == 0:
+                    empty_count += 1
+                else:
+                    if empty_count:
+                        fen_row += str(empty_count)
+                        empty_count = 0
+                    fen_row += mapping[square]
+            if empty_count:
+                fen_row += str(empty_count)
+            fen_rows.append(fen_row)
+        
+        return '/'.join(fen_rows) #Joins rows with a /
+    
+
 if __name__ == '__main__':
     board = ChessBoard()
 
