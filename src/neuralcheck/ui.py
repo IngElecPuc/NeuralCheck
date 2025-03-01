@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import filedialog
 import yaml
 from PIL import Image, ImageTk, ImageOps
 from neuralcheck.logic import ChessBoard
@@ -51,7 +52,7 @@ class ChessUI:
         self.panel_history.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.panel_history.columnconfigure(0, weight=1)
         #Text Widget for history plays
-        self.history_text = tk.Text(self.panel_history, width=20, height=20, wrap=tk.WORD)
+        self.history_text = tk.Text(self.panel_history, width=25, height=20, wrap=tk.WORD)
         self.history_text.grid(row=0, column=1, sticky="ns", padx=10)
         self.history_scrollbar = tk.Scrollbar(self.panel_history, command=self.history_text.yview)
         self.history_scrollbar.grid(row=0, column=2, sticky="ns")
@@ -103,7 +104,7 @@ class ChessUI:
                 self.label.config(text=f"Texto enviado: {texto}")
                 self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
 
-    def add_move(self, move: str) -> None:
+    def draw_moves(self, see_beginning:bool=False, see_end:bool=True) -> None:
         """
         Adds a move to the history displayed in the text widget.
 
@@ -111,15 +112,23 @@ class ChessUI:
             move: the move text to add
         """
         
+        current_view = self.history_text.yview()[0]
         self.history_text.delete("1.0", tk.END) #Delete and redraw all
-        for turn, moves in enumerate(self.logicboard.history):
+        for turn, (moves, _) in enumerate(self.logicboard.history):
             if len(moves) == 1:
                 white_move = moves[0]
                 black_move = ""
             else:
                 white_move, black_move = moves
-            self.history_text.insert(tk.END, f"{turn+1}\t{white_move}\t{black_move}\n")
-        self.history_text.see(tk.END)
+            wpointer = '➡' if self.logicboard.pointer[0] == turn and self.logicboard.pointer[1] else ''
+            bpointer = '➡' if self.logicboard.pointer[0] == turn and not self.logicboard.pointer[1] else ''
+            self.history_text.insert(tk.END, f"{turn+1}\t{wpointer+white_move}\t{bpointer+black_move}\n")
+        if see_beginning:
+            self.history_text.see("1.0")
+        elif see_end:
+            self.history_text.see(tk.END)
+        else:
+            self.history_text.yview_moveto(current_view)
 
     def draw_board(self) -> None:
         """
@@ -277,20 +286,91 @@ class ChessUI:
         self.board.delete("all")
         self.draw_board()              
 
-    def load_game(self):
-        pass
+    def load_game(self) -> None:
+        """
+        Asks user to loof for a file to load.
+        """
+        filename = filedialog.askopenfilename(
+            initialdir="test/test_games",  
+            title="Select YAML file",
+            filetypes=(("YAML files", "*.yaml"), ("PGN files", "*.pgn"), ("All files", "*.*"))
+        )
+        #breakpoint()
+        self.logicboard.load_game(filename)
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves()
 
-    def save_game(self):
-        pass
+    def save_game(self) -> None:
+        """
+        Asks user to provide a name to save.
+        """
+        filename = filedialog.asksaveasfilename(
+        initialdir="test/test_games",
+        title="Save YAML file",
+        defaultextension=".yaml",  
+        filetypes=(("YAML files", "*.yaml"), ("PGN files", "*.pgn"), ("All files", "*.*"))
+    )
 
-    def go_to_first(self):
-        pass
+        if filename:
+            self.logicboard.save_game(filename)
 
-    def previous_step(self):
-        pass
+    def go_to_first(self) -> None:
+        """
+        Set cursor to the first play of the game
+        """
+        self.logicboard.pointer = (0, True)
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_beginning=True, see_end=False)
 
-    def next_step(self):
-        pass
+    def previous_step(self) -> None:
+        """
+        Set cursor to the previous play of the game
+        """
+        turn, white_turn = self.logicboard.pointer
+        if turn == 0 and white_turn:
+            return
+        if white_turn:
+            turn -= 1
+        white_turn = not white_turn
+        self.logicboard.pointer = (turn, white_turn)
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_end=False)
 
-    def go_to_last(self):
-        pass
+    def next_step(self) -> None:
+        """
+        Set cursor to the next play of the game
+        """
+        turn, white_turn = self.logicboard.pointer
+        if turn == len(self.logicboard.history) and white_turn:
+            return
+        if white_turn:
+            moves, _ = self.logicboard.history[turn]
+            if len(moves) == 1:
+                return
+            white_turn = not white_turn  
+        else:
+            turn += 1
+            white_turn = not white_turn  
+        self.logicboard.pointer = (turn, white_turn)
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_end=False)
+
+    def go_to_last(self) -> None:
+        """
+        Set cursor to the last play of the game
+        """
+        tot = len(self.logicboard.history)
+        last_turn = self.logicboard.history[tot - 1]
+        moves = last_turn[0]
+        if len(moves) == 1:
+            self.logicboard.pointer = (tot - 1, True)
+        else:
+            self.logicboard.pointer = (tot - 1, False)
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_beginning=True, see_end=False)
+

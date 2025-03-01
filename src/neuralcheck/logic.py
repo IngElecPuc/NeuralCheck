@@ -21,6 +21,7 @@ class ChessBoard:
         self.load_position('config/initial_position.yaml') 
         self.possible_moves = self.calculate_possible_moves()
         self.bitboard = ChessBitboard(self.board)
+        self.pointer = (0, True)
 
     def _initialize_resources(self) -> None:
         """
@@ -486,6 +487,10 @@ class ChessBoard:
 
             self.white_turn = not self.white_turn
             self.possible_moves = self.calculate_possible_moves()
+            turn, _ = self.pointer
+            if not self.white_turn:
+                turn += 1
+            self.pointer = (turn, self.white_turn)
             return True, movement
         else:
             return False, ''
@@ -672,7 +677,7 @@ class ChessBoard:
         with open(filename, "w", encoding="utf-8") as file:
             yaml.dump(self.history, file, allow_unicode=True, default_flow_style=False)
 
-    def load_game(self, filename:str) -> None:
+    def load_game(self, filename:str, go2last:bool=False) -> None:
         """
         Loads a game from a YAML file. It infers the position.
         """
@@ -680,18 +685,20 @@ class ChessBoard:
             history = yaml.safe_load(file)
 
         self.clear_board()
-        self.history = history
         self.load_position('config/initial_position.yaml')
+        self.history = history
+        self.pointer = (0, True)
 
-        for white_turn, black_turn in self.history: 
-            piece, initial_position, end_position = self.read_move(white_turn)
-            self.make_move(piece, initial_position, end_position)
-            self.white_turn = False
-            if black_turn is None:
-                break
-            piece, initial_position, end_position = self.read_move(black_turn)
-            self.make_move(piece, initial_position, end_position)
-            self.white_turn = True
+        if go2last:
+            for i, (white_turn, black_turn) in enumerate(self.history): 
+                piece, initial_position, end_position = self.read_move(white_turn)
+                self.make_move(piece, initial_position, end_position)
+                self.white_turn = False
+                if black_turn is None:
+                    break
+                piece, initial_position, end_position = self.read_move(black_turn)
+                self.make_move(piece, initial_position, end_position)
+                self.white_turn = True
         self.bitboard = ChessBitboard(self.board)
 
     def fen2numpy(self, fen:str) -> np.array:
