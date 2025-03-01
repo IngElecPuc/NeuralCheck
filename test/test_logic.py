@@ -3,87 +3,182 @@ import random
 import yaml
 import numpy as np
 from src.neuralcheck.logic import ChessBoard
+from prettytable import PrettyTable
 
 def test_read_move(**kwargs):
     path = 'test/test_games'
     filename = kwargs.get("filename", None)
     history = kwargs.get("history", [])
+    one_random = kwargs.get("random", False)
+    files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
 
     #Si recibí un filename uso eso
     #Si no recibí un filename veo si tengo un history
     #Si no tengo ninguno carga uno aleatorio
+
+    def test_one(history):
+        #TODO transformar en test unitario
+        board = ChessBoard()
+        generated_history = []
+        observed_history = []
+        white_turn = True
+    
+        try:
+            for (white_move, black_move), (white_fen, black_fen) in history:
+                #breakpoint()
+                piece, initial_position, end_position = board.read_move(white_move, white_turn)
+                notation = board.notation_from_move(piece, initial_position, end_position)
+                generated_history.append([notation])
+                observed_history.append([white_move])
+                #white_turn = not white_turn
+                #board.board = board.fen2numpy(white_fen)
+                board.make_move(piece, initial_position, end_position)
+                if black_move == 'quit':
+                    break
+                piece, initial_position, end_position = board.read_move(black_move, white_turn)
+                notation = board.notation_from_move(piece, initial_position, end_position)
+                generated_history[-1].append(notation)
+                observed_history[-1].append(black_move)
+                #white_turn = not white_turn
+                #board.board = board.fen2numpy(black_fen)
+                board.make_move(piece, initial_position, end_position)
+        except Exception as e:
+            if '=' not in white_move+black_move:
+                print(e)
+                breakpoint()
+
+        generated_history   = [item for sublist in generated_history for item in sublist]
+        generated_history   = np.array(generated_history)
+        observed_history    = [item for sublist in observed_history for item in sublist]
+        observed_history    = np.array(observed_history)
+        precision           = np.sum(observed_history == generated_history) / len(observed_history)
+
+        return precision, board
 
     if filename is not None:
         if path not in filename:
             filename = os.path.join(path, filename)
         with open(filename, "r", encoding="utf-8") as file:
             history = yaml.safe_load(file)
+        if len(history[-1][0]) == 1:
+            history[-1][0].append('quit')
+        precision, board = test_one(history)
+        print(f'Testing {filename}')
+        print(f'Precision: {precision:.2%}')
+        #print(board.board)
+        #print(history)
 
-    elif len(history) == 0:
-        archivos = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-        archivo_seleccionado = random.choice(archivos)
-        filename = os.path.join(path, archivo_seleccionado)
+    elif one_random:
+        selected_file = random.choice(files)
+        filename = os.path.join(path, selected_file)
         with open(filename, "r", encoding="utf-8") as file:
             history = yaml.safe_load(file)
+        if len(history[-1][0]) == 1:
+            history[-1][0].append('quit')
+        precision, board = test_one(history)
+        print(f'Testing {filename}')
+        print(f'Precision: {precision:.2%}')
+        #print(board.board)
+        #0print(history)
     
-    if len(history[-1][0]) == 1:
-        history[-1][0].append('quit')
-    board = ChessBoard()
-    generated_history = []
-    observed_history = []
-    print(f'Testing {filename}')
-    for (white_move, black_move), (white_fen, black_fen) in history:
-        print(f'Attempting to do {white_move} in {"white" if board.white_turn else "black"} turn')
-        piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
-        result, notation = board.make_move(piece, initial_position, end_position)
-        #assert notation == white_move, 'Error, movimiento no corresponde, buscar ambigüedades'
-        generated_history.append([notation])
-        observed_history.append([white_move])
-        if notation != white_move:
-            print('Error, movimiento no corresponde, buscar ambigüedades')
-        if result:
-            print(f'{notation} success!')
-        else:
-            print("Error!")
-            break
-        if black_move == 'quit':
-            break
-        print(f'Attempting to do {black_move} in {"white" if board.white_turn else "black"} turn')
-        piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
-        result, notation = board.make_move(piece, initial_position, end_position)
-        #assert notation == black_move, 'Error, movimiento no corresponde, buscar ambigüedades'
-        generated_history[-1].append(notation)
-        observed_history[-1].append(black_move)
-        if notation != black_move:
-            print('Error, movimiento no corresponde, buscar ambigüedades')
-        if result:
-            print(f'{notation} success!')
-        else:
-            print("Error!")
-            break
+    else:
+        table = PrettyTable()
+        table.field_names = ['File', 'Precision']
+        for file in files:
+            filename = os.path.join(path, file)
+            with open(filename, "r", encoding="utf-8") as file:
+                history = yaml.safe_load(file)
+            if len(history[-1][0]) == 1:
+                history[-1][0].append('quit')
+            precision, board = test_one(history)
+            table.add_row([file, f'{precision:.2%}'])
+        print(table)
 
-    generated_history = [item for sublist in generated_history for item in sublist]
-    generated_history = np.array(generated_history)
-    observed_history = [item for sublist in observed_history for item in sublist]
-    observed_history = np.array(observed_history)
-    precision = np.sum(observed_history == generated_history) / len(observed_history)
+def test_make_move(**kwargs):
+    path = 'test/test_games'
+    filename = kwargs.get("filename", None)
+    history = kwargs.get("history", [])
+    one_random = kwargs.get("random", False)
+    files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+    do_them_all = False
 
-    print(f'Precisión: {precision:.2%}')
-    print(board.board)
-    print(history)
-    return board
+    #Si recibí un filename uso eso
+    #Si no recibí un filename veo si tengo un history
+    #Si no tengo ninguno carga uno aleatorio
 
-"""
-array([[-4,  0, -3, -5, -6,  0, -2, -4],
-       [ 0, -1, -1,  0,  0, -1, -1, -1],
-       [-1,  0, -2, -1,  0,  0,  0,  0],
-       [ 0,  3, -3,  0, -1,  0,  0,  0],
-       [ 0,  0,  0,  0,  1,  0,  0,  0],
-       [ 0,  0,  1,  0,  0,  2,  0,  1],
-       [ 1,  1,  0,  1,  0,  1,  1,  0],
-       [ 4,  2,  3,  5,  6,  0,  0,  4]])
-"""
+    def test_one(history):
+        #TODO transformar en test unitario
+        board = ChessBoard()
+        generated_history = []
+        observed_history = []
+    
+        try:
+            for (white_move, black_move), (white_fen, black_fen) in history:
+                piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
+                result, notation = board.make_move(piece, initial_position, end_position)
+                generated_history.append([notation])
+                observed_history.append([white_move])
+                if not result:
+                    break
+                if black_move == 'quit':
+                    break
+                piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
+                result, notation = board.make_move(piece, initial_position, end_position)
+                generated_history[-1].append(notation)
+                observed_history[-1].append(black_move)
+                if not result:
+                    break
+        except:
+            if '=' not in white_move+black_move:
+                breakpoint()
 
+        generated_history   = [item for sublist in generated_history for item in sublist]
+        generated_history   = np.array(generated_history)
+        observed_history    = [item for sublist in observed_history for item in sublist]
+        observed_history    = np.array(observed_history)
+        precision           = np.sum(observed_history == generated_history) / len(observed_history)
+
+        return precision, board
+
+    if filename is not None:
+        if path not in filename:
+            filename = os.path.join(path, filename)
+        with open(filename, "r", encoding="utf-8") as file:
+            history = yaml.safe_load(file)
+        if len(history[-1][0]) == 1:
+            history[-1][0].append('quit')
+        precision, board = test_one(history)
+        print(f'Testing {filename}')
+        print(f'Precision: {precision:.2%}')
+        #print(board.board)
+        #print(history)
+
+    elif one_random:
+        selected_file = random.choice(files)
+        filename = os.path.join(path, selected_file)
+        with open(filename, "r", encoding="utf-8") as file:
+            history = yaml.safe_load(file)
+        if len(history[-1][0]) == 1:
+            history[-1][0].append('quit')
+        precision, board = test_one(history)
+        print(f'Testing {filename}')
+        print(f'Precision: {precision:.2%}')
+        #print(board.board)
+        #0print(history)
+    
+    else:
+        table = PrettyTable()
+        table.field_names = ['File', 'Precision']
+        for file in files:
+            filename = os.path.join(path, file)
+            with open(filename, "r", encoding="utf-8") as file:
+                history = yaml.safe_load(file)
+            if len(history[-1][0]) == 1:
+                history[-1][0].append('quit')
+            precision, board = test_one(history)
+            table.add_row([file, f'{precision:.2%}'])
+        print(table)
+        
 def check_for(**kwargs):
     path = 'test/test_games'
     archivos = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
@@ -148,9 +243,8 @@ def check_for(**kwargs):
     return interesting, not_interesting
 
 def check_database():
-    from prettytable import PrettyTable
     tabla = PrettyTable()
-    tabla.field_names = ['Feature', 'Contiene', 'No contiene', 'Total']
+    tabla.field_names = ['Feature', 'Contains', 'Not contains', 'Total']
     co, nc = check_for(promotion=True)
     tabla.add_row(['promotion', len(co), len(nc), len(co) + len(nc)])
     co, nc = check_for(ambiguity=True)

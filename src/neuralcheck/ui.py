@@ -30,25 +30,64 @@ class ChessUI:
         self.main_frame.columnconfigure(0, weight=1)
         self.main_frame.columnconfigure(1, weight=1)
         
+        #Panel 1: Two canvases (captured pieces and main board)
+        self.panel_canvas = tk.Frame(self.main_frame)
+        self.panel_canvas.grid(row=0, column=0, sticky="nsew")
+        self.panel_canvas.columnconfigure(0, weight=0)
+        self.panel_canvas.columnconfigure(1, weight=1)
         #Off board for drawing captured pieces and clock
-        self.offboard   = tk.Canvas(self.main_frame, 
+        self.offboard   = tk.Canvas(self.panel_canvas, 
                                     width=self.cell_size * 3,
                                     height=self.cell_size * 8)
         self.offboard.grid(row=0, column=0)
-        
         #Chess grafic board
-        self.board      = tk.Canvas(self.main_frame, 
+        self.board      = tk.Canvas(self.panel_canvas, 
                                     width=self.cell_size * 8, 
                                     height=self.cell_size * 8)
         self.board.grid(row=0, column=1) 
         
+        #Panel 2: History plays with scrooll bars and navigation buttons
+        self.panel_history = tk.Frame(self.main_frame)
+        self.panel_history.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        self.panel_history.columnconfigure(0, weight=1)
         #Text Widget for history plays
-        self.history_text = tk.Text(self.main_frame, width=20, height=20, wrap=tk.WORD)
-        self.history_text.grid(row=0, column=2, sticky="ns", padx=10)
-        self.history_scrollbar = tk.Scrollbar(self.main_frame, command=self.history_text.yview)
-        self.history_scrollbar.grid(row=0, column=3, sticky="ns")
+        self.history_text = tk.Text(self.panel_history, width=20, height=20, wrap=tk.WORD)
+        self.history_text.grid(row=0, column=1, sticky="ns", padx=10)
+        self.history_scrollbar = tk.Scrollbar(self.panel_history, command=self.history_text.yview)
+        self.history_scrollbar.grid(row=0, column=2, sticky="ns")
         self.history_text.config(yscrollcommand=self.history_scrollbar.set)
-        
+        #Frame for navigation buttons
+        self.nav_frame = tk.Frame(self.panel_history)
+        self.nav_frame.grid(row=1, column=0, columnspan=2, pady=10)
+        #Navigation buttons
+        font = ("Arial", 12)
+        self.first_button = tk.Button(self.nav_frame, text="⏮", command=self.go_to_first, font=font)
+        self.first_button.grid(row=0, column=0, padx=2, pady=2)
+        self.previous_button = tk.Button(self.nav_frame, text="⬅", command=self.previous_step, font=font)
+        self.previous_button.grid(row=0, column=1, padx=2, pady=2)
+        self.next_button = tk.Button(self.nav_frame, text="➡", command=self.next_step, font=font)
+        self.next_button.grid(row=0, column=2, padx=2, pady=2)
+        self.last_button = tk.Button(self.nav_frame, text="⏭", command=self.go_to_last, font=font)
+        self.last_button.grid(row=0, column=3, padx=2, pady=2)
+
+        #Panel 3: Load and save buttons, rest of temporary controls
+        self.panel_controls = tk.Frame(self.main_frame)
+        self.panel_controls.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        self.panel_controls.columnconfigure(0, weight=1)
+        self.panel_controls.columnconfigure(1, weight=1)
+        #Load and save buttons
+        self.load_button = tk.Button(self.panel_controls, text="Load Game", command=self.load_game)
+        self.load_button.grid(row=0, column=0, padx=20, pady=5)
+        self.save_button = tk.Button(self.panel_controls, text="Save Game", command=self.save_game)
+        self.save_button.grid(row=1, column=0, padx=20, pady=5)
+
+        #HACK Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
+        self.entry = tk.Entry(self.panel_controls, width=40)
+        self.entry.grid(row=0, column=1, columnspan=2, pady=5)
+        self.label = tk.Label(self.panel_controls, text="Texto enviado: ", font=("Arial", 12))
+        self.label.grid(row=1, column=1, columnspan=2, pady=5)
+        self.entry.bind("<Return>", self.send_text)
+
         self.pieces     = self._load_pieces()
         self.cols_str   = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
         if self.rotation: 
@@ -56,13 +95,6 @@ class ChessUI:
         self.selected   = None #To store selected box
         self.draw_board()
         self.board.bind("<Button-1>", self.on_click)
-
-        #HACK Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
-        self.entry = tk.Entry(master, width=40)
-        self.entry.grid(row=1, column=0, columnspan=2, pady=10)
-        self.label = tk.Label(master, text="Texto enviado: ", font=("Arial", 12))
-        self.label.grid(row=2, column=0, columnspan=2, pady=10)
-        self.entry.bind("<Return>", self.send_text)
 
     def send_text(self, event): #HACK Borrar en el futuro
             texto = self.entry.get().strip()  # Evitar entradas vacías
@@ -244,3 +276,21 @@ class ChessUI:
 
         self.board.delete("all")
         self.draw_board()              
+
+    def load_game(self):
+        pass
+
+    def save_game(self):
+        pass
+
+    def go_to_first(self):
+        pass
+
+    def previous_step(self):
+        pass
+
+    def next_step(self):
+        pass
+
+    def go_to_last(self):
+        pass
