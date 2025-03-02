@@ -19,7 +19,7 @@ class ChessUI:
 
         self.master     = master
         self.rotation   = rotation #False if White's view, True for Black's view
-        self.logicboard = ChessBoard()
+        self.logic      = ChessBoard()
 
         master.geometry(f"{self.config['Size']['width']}x{self.config['Size']['height']}")
         master.rowconfigure(0, weight=1)
@@ -106,7 +106,7 @@ class ChessUI:
     def send_text(self, event): #HACK Borrar en el futuro
             texto = self.entry.get().strip()  # Evitar entradas vacías
             if texto:
-                self.logicboard.bitboard.make_move(texto, self.logicboard.white_turn)
+                self.logic.bitboard.make_move(texto, self.logic.white_turn)
                 self.label.config(text=f"Texto enviado: {texto}")
                 self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
 
@@ -123,7 +123,7 @@ class ChessUI:
         
         current_view = self.history_text.yview()[0]
         self.history_text.delete("1.0", tk.END) #Delete and redraw all
-        for turn, entry  in enumerate(self.logicboard.history):
+        for turn, entry  in enumerate(self.logic.history):
             if isinstance(entry, (list, tuple)):
                 moves = entry[0]
             else:
@@ -139,8 +139,8 @@ class ChessUI:
             else:
                 white_move, black_move = moves[0], moves[1]
 
-            wpointer = '➡' if self.logicboard.pointer[0] == turn and self.logicboard.pointer[1] else ''
-            bpointer = '➡' if self.logicboard.pointer[0] == turn and not self.logicboard.pointer[1] else ''
+            wpointer = '➡' if self.logic.pointer[0] == turn and self.logic.pointer[1] else ''
+            bpointer = '➡' if self.logic.pointer[0] == turn and not self.logic.pointer[1] else ''
             self.history_text.insert(tk.END, f"{turn+1}\t{wpointer+white_move}\t{bpointer+black_move}\n")
         
         if see_beginning:
@@ -169,7 +169,7 @@ class ChessUI:
         for col in self.cols_str:
             for row in range(1, 9):
                 position = f'{col}{row}'
-                response = self.logicboard.what_in(position)
+                response = self.logic.what_in(position)
                 if 'Empty' in response:
                     continue                
                 x, y = self._translate_position_logic2px(position)
@@ -182,10 +182,17 @@ class ChessUI:
             x1, y1          = self._translate_position_logic2px(position)
             x2              = x1 + self.cell_size
             y2              = y1 + self.cell_size
-            col, row        = self.logicboard.logic2array(position)
+            col, row        = self.logic.logic2array(position)
             color           = colors[(row + col) % 2]
             self.board.create_rectangle(x1, y1, x2, y2, fill=color)
             self.board.create_image(x1, y1, image=self.pieces[piece+' inverted'], anchor='nw')
+            if position in self.logic.possible_moves.keys():
+                for target in self.logic.possible_moves[position]: #Draw circles to indicate target squares that the piece can go to
+                    x3, y3  = self._translate_position_logic2px(target)
+                    cx      = x3 * self.cell_size + self.cell_size / 2
+                    cy      = y3 * self.cell_size + self.cell_size / 2
+                    r       = self.cell_size / 4
+                    self.board.create_oval(cx - r, cy - r, cx + r, cy + r, fill="yellow", outline="")
 
     def _translate_position_logic2px(self, position:str) -> Tuple[int, int]:
         """
@@ -295,7 +302,7 @@ class ChessUI:
         canvas.pack(fill="both", expand=True)
         
         pieces_to_show = ['queen', 'rook', 'knight', 'bishop']
-        prefix = 'white ' if self.logicboard.white_turn else 'black '
+        prefix = 'white ' if self.logic.white_turn else 'black '
         pieces_to_show = [prefix + piece for piece in pieces_to_show]
 
         for i, piece in enumerate(pieces_to_show):
@@ -317,7 +324,7 @@ class ChessUI:
         target_position = self._translate_position_px2logic(event.x, event.y)
         
         if self.selected is None: #Select the piece to move
-            piece = self.logicboard.what_in(target_position)
+            piece = self.logic.what_in(target_position)
             if not 'Empty' in piece:
                 self.selected = (target_position, piece)
         else:
@@ -326,16 +333,16 @@ class ChessUI:
             if piece_position != target_position:
                 promote2 = None
                 if 'pawn' in piece and \
-                    ((self.logicboard.white_turn and '8' in target_position) or \
-                     (not self.logicboard.white_turn and '1' in target_position)):
+                    ((self.logic.white_turn and '8' in target_position) or \
+                     (not self.logic.white_turn and '1' in target_position)):
                         promote2 = self.pawn_promotion()
-                moved, movement = self.logicboard.make_move(piece, piece_position, target_position, promote2=promote2)
+                moved, movement = self.logic.make_move(piece, piece_position, target_position, promote2=promote2)
                 if moved:
                     self.draw_moves() #Add move to history
                 else:
                     print("Movimiento inválido")
                     print("Los movimientos válidos son:")
-                    print(self.logicboard.allowed_movements(piece, piece_position))
+                    print(self.logic.allowed_movements(piece, piece_position))
 
         self.board.delete("all")
         self.draw_board()              
@@ -344,7 +351,7 @@ class ChessUI:
         """
         Clears the current board, and its logic
         """
-        self.logicboard = ChessBoard()
+        self.logic = ChessBoard()
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
@@ -358,7 +365,7 @@ class ChessUI:
             title="Select YAML file",
             filetypes=(("YAML files", "*.yaml"), ("PGN files", "*.pgn"), ("All files", "*.*"))
         )
-        self.logicboard.load_game(filename)
+        self.logic.load_game(filename)
         self.go_to_first()
 
     def save_game(self) -> None:
@@ -373,14 +380,14 @@ class ChessUI:
     )
 
         if filename:
-            self.logicboard.save_game(filename)
+            self.logic.save_game(filename)
 
     def go_to_first(self) -> None:
         """
         Set cursor to the first play of the game
         """
-        self.logicboard.pointer = (0, True)
-        self.logicboard.go2(0, True)
+        self.logic.pointer = (0, True)
+        self.logic.go2(0, True)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_beginning=True, see_end=False)
@@ -389,14 +396,14 @@ class ChessUI:
         """
         Set cursor to the previous play of the game
         """
-        turn, white_turn = self.logicboard.pointer
+        turn, white_turn = self.logic.pointer
         if turn == 0 and white_turn:
             return
         if white_turn:
             turn -= 1
         white_turn = not white_turn
-        self.logicboard.pointer = (turn, white_turn)
-        self.logicboard.go2(turn, white_turn)
+        self.logic.pointer = (turn, white_turn)
+        self.logic.go2(turn, white_turn)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
@@ -408,9 +415,9 @@ class ChessUI:
         """
         # TODO change this for an ongoing next_step call with a short period between calls
         promote2            = None
-        turn, white_turn    = self.logicboard.pointer
-        moves, _            = self.logicboard.history[turn]
-        if white_turn and (turn == len(self.logicboard.history) or len(moves) == 1):
+        turn, white_turn    = self.logic.pointer
+        moves, _            = self.logic.history[turn]
+        if white_turn and (turn == len(self.logic.history) or len(moves) == 1):
             return        
         move = moves[0] if white_turn else moves[1]
         if '=' in move:
@@ -420,8 +427,8 @@ class ChessUI:
             promote2    = prefix + promotions[move[1]]
             move        = move[0]
 
-        piece, initial_position, end_position = self.logicboard.read_move(move, white_turn)
-        moved, movement = self.logicboard.make_move(piece, 
+        piece, initial_position, end_position = self.logic.read_move(move, white_turn)
+        moved, movement = self.logic.make_move(piece, 
                                                     initial_position, 
                                                     end_position, 
                                                     promote2=promote2, 
@@ -430,7 +437,7 @@ class ChessUI:
         if not moved:
             print("Movimiento inválido")
             print(f"Los movimientos válidos para la pieza {piece} en {initial_position} son:")
-            print(self.logicboard.allowed_movements(piece, initial_position))
+            print(self.logic.allowed_movements(piece, initial_position))
         
         self.board.delete("all")
         self.draw_board()
@@ -440,19 +447,19 @@ class ChessUI:
         """
         Set cursor to the next play of the game
         """
-        turn, white_turn = self.logicboard.pointer
-        if turn == len(self.logicboard.history) and white_turn:
+        turn, white_turn = self.logic.pointer
+        if turn == len(self.logic.history) and white_turn:
             return
         if white_turn:
-            moves, _ = self.logicboard.history[turn]
+            moves, _ = self.logic.history[turn]
             if len(moves) == 1:
                 return
             white_turn = not white_turn  
         else:
             turn += 1
             white_turn = not white_turn  
-        self.logicboard.pointer = (turn, white_turn)
-        self.logicboard.go2(turn, white_turn)
+        self.logic.pointer = (turn, white_turn)
+        self.logic.go2(turn, white_turn)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
@@ -461,15 +468,15 @@ class ChessUI:
         """
         Set cursor to the last play of the game
         """
-        tot = len(self.logicboard.history)
-        last_turn = self.logicboard.history[tot - 1]
+        tot = len(self.logic.history)
+        last_turn = self.logic.history[tot - 1]
         moves = last_turn[0]
         if len(moves) == 1:
-            self.logicboard.pointer = (tot - 1, True)
-            self.logicboard.go2(tot - 1, True)
+            self.logic.pointer = (tot - 1, True)
+            self.logic.go2(tot - 1, True)
         else:
-            self.logicboard.pointer = (tot - 1, False)
-            self.logicboard.go2(tot - 1, False)
+            self.logic.pointer = (tot - 1, False)
+            self.logic.go2(tot - 1, False)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=True)
