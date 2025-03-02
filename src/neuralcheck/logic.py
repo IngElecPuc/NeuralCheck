@@ -765,6 +765,17 @@ class ChessBoard:
         
         return '/'.join(fen_rows) #Joins rows with a /
     
+    def go2(self, turn:int, white_player:bool) -> None:
+        """
+        Actualizes the position and pointer to fit the given number
+        """
+        entry = self.history[turn]
+        moves, fens = entry
+        white_fen = fens[0]
+        black_fen = fens[1] if len(fens) > 1 else None
+        self.board = self.fen2numpy(white_fen) if white_player else self.fen2numpy(black_fen)
+        self.white_turn = white_player
+        self.pointer = (turn, white_player)
 
 if __name__ == '__main__':
     board = ChessBoard()

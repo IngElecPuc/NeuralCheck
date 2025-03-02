@@ -66,10 +66,12 @@ class ChessUI:
         self.first_button.grid(row=0, column=0, padx=2, pady=2)
         self.previous_button = tk.Button(self.nav_frame, text="⬅", command=self.previous_step, font=font)
         self.previous_button.grid(row=0, column=1, padx=2, pady=2)
+        self.play_button = tk.Button(self.nav_frame, text="▶", command=self.execute_move, font=font)
+        self.play_button.grid(row=0, column=2, padx=2, pady=2)
         self.next_button = tk.Button(self.nav_frame, text="➡", command=self.next_step, font=font)
-        self.next_button.grid(row=0, column=2, padx=2, pady=2)
+        self.next_button.grid(row=0, column=3, padx=2, pady=2)
         self.last_button = tk.Button(self.nav_frame, text="⏭", command=self.go_to_last, font=font)
-        self.last_button.grid(row=0, column=3, padx=2, pady=2)
+        self.last_button.grid(row=0, column=4, padx=2, pady=2)
 
         #Panel 3: Load and save buttons, rest of temporary controls
         self.panel_controls = tk.Frame(self.main_frame)
@@ -77,10 +79,12 @@ class ChessUI:
         self.panel_controls.columnconfigure(0, weight=1)
         self.panel_controls.columnconfigure(1, weight=1)
         #Load and save buttons
+        self.new_button = tk.Button(self.panel_controls, text="New Game", command=self.new_game)
+        self.new_button.grid(row=0, column=0, padx=20, pady=5)
         self.load_button = tk.Button(self.panel_controls, text="Load Game", command=self.load_game)
-        self.load_button.grid(row=0, column=0, padx=20, pady=5)
+        self.load_button.grid(row=1, column=0, padx=20, pady=5)
         self.save_button = tk.Button(self.panel_controls, text="Save Game", command=self.save_game)
-        self.save_button.grid(row=1, column=0, padx=20, pady=5)
+        self.save_button.grid(row=2, column=0, padx=20, pady=5)
 
         #HACK Esta es una característica que me ayudará a debuguear las órdenes de movimiento, después borrar
         self.entry = tk.Entry(self.panel_controls, width=40)
@@ -114,15 +118,26 @@ class ChessUI:
         
         current_view = self.history_text.yview()[0]
         self.history_text.delete("1.0", tk.END) #Delete and redraw all
-        for turn, (moves, _) in enumerate(self.logicboard.history):
-            if len(moves) == 1:
-                white_move = moves[0]
-                black_move = ""
+        for turn, entry  in enumerate(self.logicboard.history):
+            if isinstance(entry, (list, tuple)):
+                moves = entry[0]
             else:
-                white_move, black_move = moves
+                moves = entry
+
+            if isinstance(moves, str):
+                moves = [moves]
+            
+            if len(moves) == 0:
+                white_move, black_move = '', ''
+            elif len(moves) == 1:
+                white_move, black_move = moves[0], ''
+            else:
+                white_move, black_move = moves[0], moves[1]
+
             wpointer = '➡' if self.logicboard.pointer[0] == turn and self.logicboard.pointer[1] else ''
             bpointer = '➡' if self.logicboard.pointer[0] == turn and not self.logicboard.pointer[1] else ''
             self.history_text.insert(tk.END, f"{turn+1}\t{wpointer+white_move}\t{bpointer+black_move}\n")
+        
         if see_beginning:
             self.history_text.see("1.0")
         elif see_end:
@@ -277,7 +292,7 @@ class ChessUI:
             if piece_position != target_position:
                 moved, movement = self.logicboard.make_move(piece, piece_position, target_position)
                 if moved:
-                    self.add_move(movement) #Add move to history
+                    self.draw_moves(movement) #Add move to history
                 else:
                     print("Movimiento inválido")
                     print("Los movimientos válidos son:")
@@ -285,6 +300,15 @@ class ChessUI:
 
         self.board.delete("all")
         self.draw_board()              
+
+    def new_game(self) -> None:
+        """
+        Clears the current board, and its logic
+        """
+        self.logicboard = ChessBoard()
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_end=False)
 
     def load_game(self) -> None:
         """
@@ -297,9 +321,7 @@ class ChessUI:
         )
         #breakpoint()
         self.logicboard.load_game(filename)
-        self.board.delete("all")
-        self.draw_board()
-        self.draw_moves()
+        self.go_to_first()
 
     def save_game(self) -> None:
         """
@@ -320,6 +342,7 @@ class ChessUI:
         Set cursor to the first play of the game
         """
         self.logicboard.pointer = (0, True)
+        self.logicboard.go2(0, True)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_beginning=True, see_end=False)
@@ -335,9 +358,13 @@ class ChessUI:
             turn -= 1
         white_turn = not white_turn
         self.logicboard.pointer = (turn, white_turn)
+        self.logicboard.go2(turn, white_turn)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
+
+    def execute_move(self) -> None:
+        pass
 
     def next_step(self) -> None:
         """
@@ -355,6 +382,7 @@ class ChessUI:
             turn += 1
             white_turn = not white_turn  
         self.logicboard.pointer = (turn, white_turn)
+        self.logicboard.go2(turn, white_turn)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
@@ -368,8 +396,10 @@ class ChessUI:
         moves = last_turn[0]
         if len(moves) == 1:
             self.logicboard.pointer = (tot - 1, True)
+            self.logicboard.go2(tot - 1, True)
         else:
             self.logicboard.pointer = (tot - 1, False)
+            self.logicboard.go2(tot - 1, False)
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_beginning=True, see_end=False)
