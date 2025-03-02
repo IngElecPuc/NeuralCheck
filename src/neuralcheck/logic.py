@@ -426,7 +426,7 @@ class ChessBoard:
 
         return possible_moves
 
-    def make_move(self, piece:str, initial_position:str, end_position:str) -> Tuple[bool, str]:
+    def make_move(self, piece:str, initial_position:str, end_position:str, add2history:bool=True) -> Tuple[bool, str]:
         """
         Executes a move if it is legal.
 
@@ -434,6 +434,7 @@ class ChessBoard:
             piece: A string indicating the color and type of piece, e.g., 'white king'.
             initial_position: A two-character string representing the starting position, e.g., 'e2'.
             end_position: A two-character string representing the destination position, e.g., 'e4'.
+            add2history: A boolean that allows this move to be recorded
 
         Returns:
             True if the move is legal and successfully executed, False otherwise.
@@ -465,10 +466,13 @@ class ChessBoard:
                     self.set_piece('black rook', 'd8')
             
             #TODO Agregar promoción de peones
-            if self.white_turn:
-                self.history.append([movement])
-            else:
-                self.history[-1].append(movement)
+            if add2history:
+                fen = self.numpy2fen(self.board)
+                if self.white_turn:
+                    self.history.append([[movement], [fen]])
+                else:
+                    self.history[-1][0].append(movement)
+                    self.history[-1][1].append(fen)
             
             if 'K' in movement:
                 if self.white_turn:
@@ -485,11 +489,11 @@ class ChessBoard:
                 elif initial_position == 'h8':
                     self.castle_flags['h8 rook moved'] = True
 
-            self.white_turn = not self.white_turn
-            self.possible_moves = self.calculate_possible_moves()
             turn, _ = self.pointer
             if not self.white_turn:
                 turn += 1
+            self.white_turn = not self.white_turn
+            self.possible_moves = self.calculate_possible_moves()
             self.pointer = (turn, self.white_turn)
             return True, movement
         else:
@@ -688,15 +692,17 @@ class ChessBoard:
         self.load_position('config/initial_position.yaml')
         self.history = history
         self.pointer = (0, True)
-
+        
         if go2last:
-            for i, (white_turn, black_turn) in enumerate(self.history): 
-                piece, initial_position, end_position = self.read_move(white_turn)
+            if len(history[-1][0]) == 1:
+                history[-1][0].append('quit')
+            for i, ((white_move, black_move), (white_fen, black_fen)) in enumerate(self.history):
+                piece, initial_position, end_position = self.read_move(white_move)
                 self.make_move(piece, initial_position, end_position)
                 self.white_turn = False
-                if black_turn is None:
+                if black_move == 'quit':
                     break
-                piece, initial_position, end_position = self.read_move(black_turn)
+                piece, initial_position, end_position = self.read_move(black_move)
                 self.make_move(piece, initial_position, end_position)
                 self.white_turn = True
         self.bitboard = ChessBitboard(self.board)
@@ -775,7 +781,9 @@ class ChessBoard:
         black_fen = fens[1] if len(fens) > 1 else None
         self.board = self.fen2numpy(white_fen) if white_player else self.fen2numpy(black_fen)
         self.white_turn = white_player
+        self.possible_moves = self.calculate_possible_moves()
         self.pointer = (turn, white_player)
+
 
 if __name__ == '__main__':
     board = ChessBoard()

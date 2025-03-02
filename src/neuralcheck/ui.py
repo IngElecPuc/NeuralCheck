@@ -92,6 +92,8 @@ class ChessUI:
         self.label = tk.Label(self.panel_controls, text="Texto enviado: ", font=("Arial", 12))
         self.label.grid(row=1, column=1, columnspan=2, pady=5)
         self.entry.bind("<Return>", self.send_text)
+        self.breakpoint_button = tk.Button(self.panel_controls, text="Breakpoint", command=self.self_breakpoint)
+        self.breakpoint_button.grid(row=2, column=1, pady=5)
 
         self.pieces     = self._load_pieces()
         self.cols_str   = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
@@ -107,6 +109,9 @@ class ChessUI:
                 self.logicboard.bitboard.make_move(texto, self.logicboard.white_turn)
                 self.label.config(text=f"Texto enviado: {texto}")
                 self.entry.delete(0, tk.END)  # Limpiar la barra de entrada
+
+    def self_breakpoint(self): #HACK Borrar en el futuro
+        breakpoint()
 
     def draw_moves(self, see_beginning:bool=False, see_end:bool=True) -> None:
         """
@@ -292,7 +297,7 @@ class ChessUI:
             if piece_position != target_position:
                 moved, movement = self.logicboard.make_move(piece, piece_position, target_position)
                 if moved:
-                    self.draw_moves(movement) #Add move to history
+                    self.draw_moves() #Add move to history
                 else:
                     print("Movimiento inválido")
                     print("Los movimientos válidos son:")
@@ -319,7 +324,6 @@ class ChessUI:
             title="Select YAML file",
             filetypes=(("YAML files", "*.yaml"), ("PGN files", "*.pgn"), ("All files", "*.*"))
         )
-        #breakpoint()
         self.logicboard.load_game(filename)
         self.go_to_first()
 
@@ -364,7 +368,27 @@ class ChessUI:
         self.draw_moves(see_end=False)
 
     def execute_move(self) -> None:
-        pass
+        """
+        Executes the move isntead of oly refresh the position.
+        Validation of movements are taken into acount.
+        """
+        # TODO change this for an ongoing next_step call with a short period between calls
+        turn, white_turn = self.logicboard.pointer
+        moves, _ = self.logicboard.history[turn]
+        if white_turn and (turn == len(self.logicboard.history) or len(moves) == 1):
+            return        
+        move = moves[0] if white_turn else moves[1]
+        piece, initial_position, end_position = self.logicboard.read_move(move, white_turn)
+        moved, movement = self.logicboard.make_move(piece, initial_position, end_position, add2history=False)
+        print(move, piece, initial_position, end_position, turn, white_turn)
+        if not moved:
+            print("Movimiento inválido")
+            print(f"Los movimientos válidos para la pieza {piece} en {initial_position} son:")
+            print(self.logicboard.allowed_movements(piece, initial_position))
+        
+        self.board.delete("all")
+        self.draw_board()
+        self.draw_moves(see_end=False)
 
     def next_step(self) -> None:
         """
@@ -403,4 +427,3 @@ class ChessUI:
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_beginning=True, see_end=False)
-
