@@ -20,8 +20,9 @@ class ChessBoard:
         self.clear_board()
         self.load_position('config/initial_position.yaml') 
         self.possible_moves = self.calculate_possible_moves()
-        self.bitboard = ChessBitboard(self.board)
-        self.pointer = (0, True)
+        self.bitboard       = ChessBitboard(self.board)
+        self.pointer        = (0, True)
+        self.last_turn      = (None, None, None)
 
     def _initialize_resources(self) -> None:
         """
@@ -377,9 +378,11 @@ class ChessBoard:
                 if y - 1 >= 0 and x - 1 >= 0:
                     if self.board[x - 1, y - 1] < 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
-                if x == 1: #En passant TODO
-                    #self.last_turn chequear si la pieza hizo un movimiento amplio en el turno anterior
-                    pass
+                if x == 3: #En passant 
+                    last_piece, last_init, last_end = self.last_turn
+                    xp, yp = self.logic2array(last_end)
+                    if 'pawn' in last_piece and xp == 3 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
+                        piece_moves = np.concatenate((piece_moves, np.array([[-1, yp - y]])))
 
             else: 
                 piece_moves = np.array([[1, 0]])
@@ -391,8 +394,11 @@ class ChessBoard:
                 if y - 1 >= 0 and x + 1 < 8:
                     if self.board[x + 1, y - 1] > 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
-                if x == 6: #En passant TODO
-                    pass
+                if x == 4: #En passant
+                    last_piece, last_init, last_end = self.last_turn
+                    xp, yp = self.logic2array(last_end)
+                    if 'pawn' in last_piece and xp == 4 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
+                        piece_moves = np.concatenate((piece_moves, np.array([[1, yp - y]])))
             #piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn) #TODO Test this
         else:
             piece_moves = np.array([[0,0]])
@@ -446,13 +452,33 @@ class ChessBoard:
         Returns:
             True if the move is legal and successfully executed, False otherwise.
         """        
+        def en_passant_conditions() -> None:
+            """
+            Set of conditions for en passant
+            """
+            if last_piece is None:
+                return False
+            allows = True
+            allows = allows and 'pawn' in piece
+            allows = allows and 'pawn' in last_piece
+            allows = allows and 'Empty' in self.what_in(end_position)
+            x, y    = self.logic2array(initial_position)
+            xp, yp  = self.logic2array(last_end)
+            specifics = ((self.white_turn, x, xp) == (True, 3, 3)) or ((self.white_turn, x, xp) == (False, 4, 4)) 
+            allows = allows and specifics
+            allows = allows and np.abs(y-yp) == 1
+            return allows
+
         legal_movements = self.allowed_movements(piece, initial_position) #TODO reduce legal movements for check and pinned pieces
                 
         if end_position in legal_movements:
             movement = self.notation_from_move(piece, initial_position, end_position)
-            if 'x' in movement: #TODO add to captured pieces whatever in end_position
-                pass
-            self.last_turn = [piece, movement] #Enables en passant
+            last_piece, last_init, last_end = self.last_turn
+            self.last_turn = (piece, initial_position, end_position) #Enables en passant
+
+            if en_passant_conditions(): 
+                self.set_piece('Empty square', last_end)
+                movement = initial_position[0] + 'x' + movement
             
             self.set_piece('Empty square', initial_position)
             self.set_piece(piece, end_position)
@@ -486,6 +512,9 @@ class ChessBoard:
                     self.history[-1][0].append(movement)
                     self.history[-1][1].append(fen)
             
+            if 'x' in movement: #TODO add to captured pieces whatever in end_position
+                pass
+
             if 'K' in movement:
                 if self.white_turn:
                     self.castle_flags['white king moved'] = True
@@ -526,7 +555,6 @@ class ChessBoard:
         """ 
         #TODO jaque, y ojo, jaque a la descubierta
         #TODO mate
-        #TODO en passant
         
         movement = ''
         if 'king' in piece:
@@ -585,8 +613,6 @@ class ChessBoard:
             end_position: A two-character string representing the destination position, e.g., 'f3'.
 
         """
-        #TODO add en passant
-        #TODO add castle
 
         stripped_play = play.replace('+', '').replace('#', '')
         if 'O' not in stripped_play: 
