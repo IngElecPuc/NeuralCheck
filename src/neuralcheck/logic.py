@@ -426,7 +426,13 @@ class ChessBoard:
 
         return possible_moves
 
-    def make_move(self, piece:str, initial_position:str, end_position:str, add2history:bool=True) -> Tuple[bool, str]:
+    def make_move(self, 
+                  piece:str, 
+                  initial_position:str, 
+                  end_position:str, 
+                  promote2:str=None, 
+                  add2history:bool=True
+                  ) -> Tuple[bool, str]:
         """
         Executes a move if it is legal.
 
@@ -434,6 +440,7 @@ class ChessBoard:
             piece: A string indicating the color and type of piece, e.g., 'white king'.
             initial_position: A two-character string representing the starting position, e.g., 'e2'.
             end_position: A two-character string representing the destination position, e.g., 'e4'.
+            promote: A string indicating the color and type of piece for pawn promotion, e.g., 'white queen'.
             add2history: A boolean that allows this move to be recorded
 
         Returns:
@@ -465,7 +472,12 @@ class ChessBoard:
                     self.set_piece('Empty square', 'a8')
                     self.set_piece('black rook', 'd8')
             
-            #TODO Agregar promoción de peones
+            if promote2 is not None and 'pawn' in piece:
+                if (self.white_turn and '8' in end_position) or (not self.white_turn and '1' in end_position):
+                    self.set_piece(promote2, end_position)
+                    promotions = {'queen' : 'Q', 'rook' : 'R', 'knight' : 'N', 'bishop' : 'B'}
+                    movement += '=' + promotions[promote2.split(' ')[1]]
+
             if add2history:
                 fen = self.numpy2fen(self.board)
                 if self.white_turn:
@@ -514,7 +526,6 @@ class ChessBoard:
         """ 
         #TODO jaque, y ojo, jaque a la descubierta
         #TODO mate
-        #TODO promoción
         #TODO en passant
         
         movement = ''
@@ -576,10 +587,9 @@ class ChessBoard:
         """
         #TODO add en passant
         #TODO add castle
-        #TODO add promotion
 
         stripped_play = play.replace('+', '').replace('#', '')
-        if 'O' not in stripped_play: #TODO add promotion condition
+        if 'O' not in stripped_play: 
             end_position = stripped_play[-2:]
         elif 'O-O-O' in play: #Long castle, first this beacuse 'O-O' is contained in 'O-O-O'
             if white_player:

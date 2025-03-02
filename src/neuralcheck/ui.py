@@ -278,6 +278,35 @@ class ChessUI:
 
         return images
 
+    def pawn_promotion(self) -> None:
+        """
+        Creates a popup that allows the user to select a piece for promotion
+        """
+        selected_piece = None
+        def on_piece_click(event, piece_key):
+            nonlocal selected_piece
+            selected_piece = piece_key 
+            popup.destroy()
+
+        popup = tk.Toplevel(self.master)
+        popup.title('Select a piece for promotion')
+        popup.geometry(f'{self.cell_size*4}x{self.cell_size}')
+        canvas = tk.Canvas(popup, width=self.cell_size*4, height=self.cell_size)
+        canvas.pack(fill="both", expand=True)
+        
+        pieces_to_show = ['queen', 'rook', 'knight', 'bishop']
+        prefix = 'white ' if self.logicboard.white_turn else 'black '
+        pieces_to_show = [prefix + piece for piece in pieces_to_show]
+
+        for i, piece in enumerate(pieces_to_show):
+            img_id = canvas.create_image(i*self.cell_size, 0, image=self.pieces[piece], anchor="nw")
+            canvas.tag_bind(img_id, "<Button-1>", lambda event, piece_key=piece: on_piece_click(event, piece_key)) #Asociates the click event with the selected piece before the destruccion of the popup
+
+        popup.grab_set() #Makes the popup modal
+        self.master.wait_window(popup) #Waits for the popup to be destroyed
+        
+        return selected_piece
+
     def on_click(self, event: tk.Event) -> None:
         """
         Determine the clicked square and handle selection/movement
@@ -295,7 +324,12 @@ class ChessUI:
             piece_position, piece = self.selected
             self.selected = None
             if piece_position != target_position:
-                moved, movement = self.logicboard.make_move(piece, piece_position, target_position)
+                promote2 = None
+                if 'pawn' in piece and \
+                    ((self.logicboard.white_turn and '8' in target_position) or \
+                     (not self.logicboard.white_turn and '1' in target_position)):
+                        promote2 = self.pawn_promotion()
+                moved, movement = self.logicboard.make_move(piece, piece_position, target_position, promote2=promote2)
                 if moved:
                     self.draw_moves() #Add move to history
                 else:
@@ -373,13 +407,25 @@ class ChessUI:
         Validation of movements are taken into acount.
         """
         # TODO change this for an ongoing next_step call with a short period between calls
-        turn, white_turn = self.logicboard.pointer
-        moves, _ = self.logicboard.history[turn]
+        promote2            = None
+        turn, white_turn    = self.logicboard.pointer
+        moves, _            = self.logicboard.history[turn]
         if white_turn and (turn == len(self.logicboard.history) or len(moves) == 1):
             return        
         move = moves[0] if white_turn else moves[1]
+        if '=' in move:
+            move        = move.split('=')
+            prefix      = 'white ' if white_turn else 'black '
+            promotions  = {'Q': 'queen', 'R' : 'rook', 'N' : 'knight', 'B' : 'bishop'}
+            promote2    = prefix + promotions[move[1]]
+            move        = move[0]
+
         piece, initial_position, end_position = self.logicboard.read_move(move, white_turn)
-        moved, movement = self.logicboard.make_move(piece, initial_position, end_position, add2history=False)
+        moved, movement = self.logicboard.make_move(piece, 
+                                                    initial_position, 
+                                                    end_position, 
+                                                    promote2=promote2, 
+                                                    add2history=False)
         print(move, piece, initial_position, end_position, turn, white_turn)
         if not moved:
             print("Movimiento inválido")
@@ -426,4 +472,6 @@ class ChessUI:
             self.logicboard.go2(tot - 1, False)
         self.board.delete("all")
         self.draw_board()
-        self.draw_moves(see_beginning=True, see_end=False)
+        self.draw_moves(see_end=True)
+
+    
