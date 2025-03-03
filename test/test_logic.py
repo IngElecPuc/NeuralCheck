@@ -258,6 +258,27 @@ def check_database():
 
     print(tabla)
 
+def make_moves(board:ChessBoard, sequence):
+    if len(sequence[-1]) == 1:
+            sequence[-1].append('quit')
+    for white_move, black_move in sequence:
+        piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
+        notation = board.notation_from_move(piece, initial_position, end_position)
+        board.make_move(piece, initial_position, end_position)
+        if black_move == 'quit':
+            break
+        piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
+        notation = board.notation_from_move(piece, initial_position, end_position)
+        board.make_move(piece, initial_position, end_position)
+
+"""
+from test.test_logic import *
+self = ChessBoard()
+#make_moves(self, [['e4', 'e5'], ['Nf3', 'Nc6'], ['Bc4', 'Nf6'], ['Ng5', 'Bc5'], ['Bf7+']]) #Italiana hasta jaque del alfil
+#make_moves(self, [['e4', 'e6'], ['d4', 'd5'], ['e5', 'f6'], ['Nf3', 'fxe5'], ['Nxe5', 'Nc6'], ['Qh5+']]) #Francesa hasta jaque de la reina
+make_moves(self, [['e4', 'd5'], ['exd5', 'Qxd5'], ['Nc3', 'Qe5+']]) #Escandinaba con jaque de la reina
+self.possible_moves
+"""
 
 #from test.test_logic import *
 #interesting, not_interesting = check_for(promotion=True, ambiguity=True, enpassant=True, scastle=True, lcastle=True)
