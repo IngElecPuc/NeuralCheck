@@ -177,22 +177,39 @@ class ChessUI:
 
         #If a piece is selected draw it with inverted colors
         if self.selected is not None:
-            colors = ["black", "gray10"]
+            piece_colors = ["black", "gray10"]
             position, piece = self.selected
             x1, y1          = self._translate_position_logic2px(position)
             x2              = x1 + self.cell_size
             y2              = y1 + self.cell_size
             col, row        = self.logic.logic2array(position)
-            color           = colors[(row + col) % 2]
+            color           = piece_colors[(row + col) % 2]
             self.board.create_rectangle(x1, y1, x2, y2, fill=color)
             self.board.create_image(x1, y1, image=self.pieces[piece+' inverted'], anchor='nw')
             if position in self.logic.possible_moves.keys():
                 for target in self.logic.possible_moves[position]: #Draw circles to indicate target squares that the piece can go to
                     x3, y3  = self._translate_position_logic2px(target)
-                    cx      = x3 * self.cell_size + self.cell_size / 2
-                    cy      = y3 * self.cell_size + self.cell_size / 2
-                    r       = self.cell_size / 4
-                    self.board.create_oval(cx - r, cy - r, cx + r, cy + r, fill="yellow", outline="")
+                    margin = self.cell_size * 0.1  
+                    if 'Empty' in self.logic.what_in(target):
+                        self.board.create_oval(
+                            x3 + margin, y3 + margin,
+                            x3 + self.cell_size - margin, y3 + self.cell_size - margin,
+                            outline="#5A5A5A",  
+                            width=3)
+                    else:
+                        self.board.create_rectangle(
+                            x3 + margin, y3 + margin,
+                            x3 + self.cell_size - margin, y3 + self.cell_size - margin,
+                            outline="black",  
+                            width=3)
+                        self.board.create_line(
+                            x3 + margin, y3 + margin,
+                            x3 + self.cell_size - margin, y3 + self.cell_size - margin,
+                            fill="black", width=3)
+                        self.board.create_line(
+                            x3 + self.cell_size - margin, y3 + margin,
+                            x3 + margin, y3 + self.cell_size - margin,
+                            fill="black", width=3)                        
 
     def _translate_position_logic2px(self, position:str) -> Tuple[int, int]:
         """
