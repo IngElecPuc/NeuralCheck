@@ -95,7 +95,7 @@ def test_read_move(**kwargs):
         print(table)
 
 def test_make_move(**kwargs):
-    path = 'test/test_games'
+    path = 'test/test_games/'
     filename = kwargs.get("filename", None)
     history = kwargs.get("history", [])
     one_random = kwargs.get("random", False)
@@ -112,25 +112,21 @@ def test_make_move(**kwargs):
         generated_history = []
         observed_history = []
     
-        try:
-            for (white_move, black_move), (white_fen, black_fen) in history:
-                piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
-                result, notation = board.make_move(piece, initial_position, end_position)
-                generated_history.append([notation])
-                observed_history.append([white_move])
-                if not result:
-                    break
-                if black_move == 'quit':
-                    break
-                piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
-                result, notation = board.make_move(piece, initial_position, end_position)
-                generated_history[-1].append(notation)
-                observed_history[-1].append(black_move)
-                if not result:
-                    break
-        except:
-            if '=' not in white_move+black_move:
-                breakpoint()
+        for (white_move, black_move), (white_fen, black_fen) in history:
+            piece, initial_position, end_position = board.read_move(white_move, board.white_turn)
+            result, notation = board.make_move(piece, initial_position, end_position)
+            generated_history.append([notation])
+            observed_history.append([white_move])
+            if not result:
+                break
+            if black_move == 'quit':
+                break
+            piece, initial_position, end_position = board.read_move(black_move, board.white_turn)
+            result, notation = board.make_move(piece, initial_position, end_position)
+            generated_history[-1].append(notation)
+            observed_history[-1].append(black_move)
+            if not result:
+                break
 
         generated_history   = [item for sublist in generated_history for item in sublist]
         generated_history   = np.array(generated_history)
@@ -171,11 +167,14 @@ def test_make_move(**kwargs):
         table.field_names = ['File', 'Precision']
         for file in files:
             filename = os.path.join(path, file)
-            with open(filename, "r", encoding="utf-8") as file:
-                history = yaml.safe_load(file)
+            with open(filename, "r", encoding="utf-8") as yamlfile:
+                history = yaml.safe_load(yamlfile)
             if len(history[-1][0]) == 1:
                 history[-1][0].append('quit')
+            #try:
             precision, board = test_one(history)
+            #except:
+            #    print(f'Error en archivo {file}')
             table.add_row([file, f'{precision:.2%}'])
         print(table)
         
@@ -271,8 +270,12 @@ def make_moves(board:ChessBoard, sequence):
         notation = board.notation_from_move(piece, initial_position, end_position)
         board.make_move(piece, initial_position, end_position)
 
+if __name__ == '__main__':
+    test_make_move()
+
 """
 from test.test_logic import *
+board = test_make_move()
 self = ChessBoard()
 #make_moves(self, [['e4', 'e5'], ['Nf3', 'Nc6'], ['Bc4', 'Nf6'], ['Ng5', 'Bc5'], ['Bf7+']]) #Italiana hasta jaque del alfil
 #make_moves(self, [['e4', 'e6'], ['d4', 'd5'], ['e5', 'f6'], ['Nf3', 'fxe5'], ['Nxe5', 'Nc6'], ['Qh5+']]) #Francesa hasta jaque de la reina

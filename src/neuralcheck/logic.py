@@ -29,7 +29,6 @@ class ChessBoard:
         self.last_turn          = (None, None, None)
         self.initializing       = False
 
-
     def _initialize_resources(self) -> None:
         """
         Initialize a series of lists, arrays and dictionaries to not calculate them after
@@ -49,7 +48,7 @@ class ChessBoard:
         """
         self.board = np.zeros((8,8), dtype=np.int64)
         self.history = []
-        self.last_turn = ''
+        self.last_turn = (None, None, None)
         self.castle_flags = {
             'white king moved': False,
             'black king moved': False,
@@ -429,9 +428,10 @@ class ChessBoard:
                 dir = np.sign(dir)
                 ray = self.raycast(xa, ya, dir, white_turn, remove_own=True)
                 path = {tuple(row) for row in ray + np.array([xa, ya])}
-                interseccion = my_moves.intersection(path)
-                interseccion = np.array(list(interseccion))
-                onray = interseccion - np.array([[x, y]]) #Atualizing 
+                intersection = my_moves.intersection(path)
+                intersection = np.array(list(intersection))
+                intersection = intersection if intersection.size > 0 else np.array([[0, 0]])
+                onray = intersection - np.array([[x, y]]) #Atualizing 
 
             #if attacker_position in king_moves: 
             i = 0 

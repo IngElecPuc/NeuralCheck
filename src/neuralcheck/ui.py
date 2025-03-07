@@ -100,6 +100,7 @@ class ChessUI:
         if self.rotation: 
             self.cols_str = self.cols_str[::-1]        
         self.selected   = None #To store selected box
+        self.coordinates = True
         self.draw_board()
         self.board.bind("<Button-1>", self.on_click)
 
@@ -210,6 +211,37 @@ class ChessUI:
                             x3 + self.cell_size - margin, y3 + margin,
                             x3 + margin, y3 + self.cell_size - margin,
                             fill="black", width=3)                        
+
+        if self.coordinates: #Draw coordinates to show in the board
+            margin = 2  
+
+            for col in range(8): #Col tags in last row 
+                x1 = col * self.cell_size
+                y1 = 7 * self.cell_size
+                x2 = x1 + self.cell_size
+                y2 = y1 + self.cell_size
+                letter = self.cols_str[col] #Adjust to rotation
+                self.board.create_text(
+                    x2 - margin, y2 - margin,
+                    text=letter,
+                    anchor="se",
+                    font=("Arial", 10, "bold"),
+                    fill="black")
+
+            for row in range(8): #Row tags in last col
+                x1 = 7 * self.cell_size
+                y1 = row * self.cell_size
+                x2 = x1 + self.cell_size
+                y2 = y1 + self.cell_size
+                logic_row = (row + 1) if self.rotation else (8 - row)
+                offset = -12 if row == 7 else 0
+                self.board.create_text(
+                    x2 - margin, y2 - margin + offset,
+                    text=str(logic_row),
+                    anchor="se",
+                    font=("Arial", 10, "bold"),
+                    fill="black"
+                )
 
     def _translate_position_logic2px(self, position:str) -> Tuple[int, int]:
         """
