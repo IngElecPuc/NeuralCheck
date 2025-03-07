@@ -358,8 +358,11 @@ class ChessUI:
                     self.draw_moves() #Add move to history
                 else:
                     print("Movimiento inválido")
-                    print("Los movimientos válidos son:")
-                    print(self.logic.allowed_movements(piece, piece_position))
+                    print("Los movimientos válidos para esa pieza son:")
+                    if piece_position in self.logic.possible_moves.keys():
+                        print(self.logic.possible_moves[piece_position])
+                    else:
+                        print("Ninguno")
 
         self.board.delete("all")
         self.draw_board()              

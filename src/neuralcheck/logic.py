@@ -22,6 +22,7 @@ class ChessBoard:
         self.load_position('config/initial_position.yaml') 
         self.line_vectors       = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]])
         self.diagonal_vectors   = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]])
+        self.pinned_pieces      = []
         self.possible_moves     = self.calculate_possible_moves()
         self.bitboard           = ChessBitboard(self.board)
         self.pointer            = (0, True)
@@ -275,10 +276,19 @@ class ChessBoard:
         player_turn = 1 if white_turn else -1
         for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
             for i in range(1, 8): #We advance i units in the desired direction and check for obstacles at each step.
-                if 0 <= x + i*dx and x + i*dx < 8 and 0 <= y + i*dy and y + i*dy < 8: #Ensure movement stays within the board
-                    if player_turn * self.board[x + i*dx, y + i*dy] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
+                xp, yp = x + i*dx, y + i*dy
+                if 0 <= xp < 8 and 0 <= yp < 8: #Ensure movement stays within the board
+                    if player_turn * self.board[xp, yp] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
                         moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
-                        if player_turn * self.board[x + i*dx, y + i*dy] < 0: #Stops, but allows capturing.
+                        if player_turn * self.board[xp, yp] < 0: #Stops, but allows capturing; but first check for pinned pieces.
+                            for j in range(i + 1, 8):
+                                x_check, y_check = x + j*dx, y + j*dy
+                                if 0 <= x_check < 8 and 0 <= y_check < 8:
+                                    if player_turn * self.board[x_check, y_check] < 0 and np.abs(self.board[x_check, y_check]) != 6: #There is another enemy piece which is not a king -> nothing hapens
+                                        break
+                                    if player_turn * self.board[x_check, y_check] == -6 and self.array2logic(xp, yp) not in self.pinned_pieces: #There is an enemy king behind the lines so this piece must be pinned
+                                        self.pinned_pieces.append(self.array2logic(xp, yp))
+                                        break
                             break
                     else: 
                         if remove_own: #Encounter a piece of the same color; stops immediately.
@@ -433,12 +443,6 @@ class ChessBoard:
                 else:
                     i += 1
             vectors = np.concatenate((vectors, onray))
-
-        else:
-            for ptype in piece_rays:
-                pass
-            #TODO Chek that the piece is not pinned to the king
-            pass
         
         return vectors
 
@@ -515,10 +519,20 @@ class ChessBoard:
 
         return np.array(squares_status)
 
-    def calculate_possible_moves(self, in_check:bool=False, remove_own:bool=True) -> Dict[str, str]:
+    def calculate_possible_moves(self, in_check:bool=False, remove_own:bool=True) -> Dict[str, List[str]]:
         """
         Calculates and updates all movements that each piece can perform
-        """
+        
+        Parameters:
+            in_check: there is a check to the king
+            remove_own: a boolean that signals that the square should be eliminated 
+            if there is a friendly piece -> should be True except when calculating
+            for attaqued squares
+
+        Returns:
+            Dict: a diccionary with position entry, and a list of positions for values indicating
+            where is legal that the piece in the key can move
+        """        
         possible_moves = {}
         for x in range(8):
             for y in range(8):
@@ -529,6 +543,10 @@ class ChessBoard:
                     movements = self.allowed_movements(piece, position, restrict_turn=False, in_check=in_check, remove_own=remove_own)
                     if len(movements) > 0:
                         possible_moves[position] = movements
+        
+        for key in list(possible_moves.keys()): #Filtering pinned pieces
+            if key in self.pinned_pieces:
+                del possible_moves[key]
 
         return possible_moves
 
@@ -583,81 +601,81 @@ class ChessBoard:
         if np.abs(king_status) == 2:
             return False, ''
 
-        legal_movements = self.allowed_movements(piece, initial_position, in_check=np.abs(king_status) == 1) #TODO reduce legal movements for check and pinned pieces
+        if initial_position in self.possible_moves.keys():
+            if end_position in self.possible_moves[initial_position]:
+                movement = self.notation_from_move(piece, initial_position, end_position)
+                last_piece, last_init, last_end = self.last_turn
+                self.last_turn = (piece, initial_position, end_position) #Enables en passant
+
+                if en_passant_conditions(piece, initial_position, end_position, last_piece, last_end): 
+                    self.set_piece('Empty square', last_end)
+                    movement = initial_position[0] + 'x' + movement
                 
-        if end_position in legal_movements:
-            movement = self.notation_from_move(piece, initial_position, end_position)
-            last_piece, last_init, last_end = self.last_turn
-            self.last_turn = (piece, initial_position, end_position) #Enables en passant
+                self.set_piece('Empty square', initial_position)
+                self.set_piece(piece, end_position)
+                
+                if movement == 'O-O': #King movement is already done, we need to move the rook
+                    if self.white_turn:
+                        self.set_piece('Empty square', 'h1')
+                        self.set_piece('white rook', 'f1')
+                    else:
+                        self.set_piece('Empty square', 'h8')
+                        self.set_piece('black rook', 'f8')
+                if movement == 'O-O-O': #Same
+                    if self.white_turn:
+                        self.set_piece('Empty square', 'a1')
+                        self.set_piece('white rook', 'd1')
+                    else:
+                        self.set_piece('Empty square', 'a8')
+                        self.set_piece('black rook', 'd8')
+                
+                if promote2 is not None and 'pawn' in piece:
+                    if (self.white_turn and '8' in end_position) or (not self.white_turn and '1' in end_position):
+                        self.set_piece(promote2, end_position)
+                        promotions = {'queen' : 'Q', 'rook' : 'R', 'knight' : 'N', 'bishop' : 'B'}
+                        movement += '=' + promotions[promote2.split(' ')[1]]
 
-            if en_passant_conditions(piece, initial_position, end_position, last_piece, last_end): 
-                self.set_piece('Empty square', last_end)
-                movement = initial_position[0] + 'x' + movement
-            
-            self.set_piece('Empty square', initial_position)
-            self.set_piece(piece, end_position)
-            
-            if movement == 'O-O': #King movement is already done, we need to move the rook
-                if self.white_turn:
-                    self.set_piece('Empty square', 'h1')
-                    self.set_piece('white rook', 'f1')
-                else:
-                    self.set_piece('Empty square', 'h8')
-                    self.set_piece('black rook', 'f8')
-            if movement == 'O-O-O': #Same
-                if self.white_turn:
-                    self.set_piece('Empty square', 'a1')
-                    self.set_piece('white rook', 'd1')
-                else:
-                    self.set_piece('Empty square', 'a8')
-                    self.set_piece('black rook', 'd8')
-            
-            if promote2 is not None and 'pawn' in piece:
-                if (self.white_turn and '8' in end_position) or (not self.white_turn and '1' in end_position):
-                    self.set_piece(promote2, end_position)
-                    promotions = {'queen' : 'Q', 'rook' : 'R', 'knight' : 'N', 'bishop' : 'B'}
-                    movement += '=' + promotions[promote2.split(' ')[1]]
+                if 'x' in movement: #TODO add to captured pieces whatever in end_position
+                    pass
 
-            if 'x' in movement: #TODO add to captured pieces whatever in end_position
-                pass
+                if 'K' in movement:
+                    if self.white_turn:
+                        self.castle_flags['white king moved'] = True
+                    else:
+                        self.castle_flags['black king moved'] = True
+                elif 'R' in movement:
+                    if initial_position == 'a1':
+                        self.castle_flags['a1 rook moved'] = True
+                    elif initial_position == 'h1':
+                        self.castle_flags['h1 rook moved'] = True
+                    elif initial_position == 'a8':
+                        self.castle_flags['a8 rook moved'] = True
+                    elif initial_position == 'h8':
+                        self.castle_flags['h8 rook moved'] = True
+                
+                self.pinned_pieces = []
+                self.possible_moves = self.calculate_possible_moves() #Recalculate legal moves just after modifying the board to check the impact
+                king_status = self.assess_king_status(not self.white_turn, restrict_turn=False)
+                if np.abs(king_status) == 1:
+                    self.possible_moves = self.calculate_possible_moves(in_check=True)
+                    movement += '+'
+                elif np.abs(king_status) == 2:                
+                    movement += '#'
 
-            if 'K' in movement:
-                if self.white_turn:
-                    self.castle_flags['white king moved'] = True
-                else:
-                    self.castle_flags['black king moved'] = True
-            elif 'R' in movement:
-                if initial_position == 'a1':
-                    self.castle_flags['a1 rook moved'] = True
-                elif initial_position == 'h1':
-                    self.castle_flags['h1 rook moved'] = True
-                elif initial_position == 'a8':
-                    self.castle_flags['a8 rook moved'] = True
-                elif initial_position == 'h8':
-                    self.castle_flags['h8 rook moved'] = True
-            
-            self.possible_moves = self.calculate_possible_moves() #Recalculate legal moves just after modifying the board to check the impact
-            king_status = self.assess_king_status(not self.white_turn, restrict_turn=False)
-            if np.abs(king_status) == 1:
-                self.possible_moves = self.calculate_possible_moves(in_check=True)
-                movement += '+'
-            elif np.abs(king_status) == 2:                
-                movement += '#'
+                if add2history:
+                    fen = self.numpy2fen(self.board)
+                    if self.white_turn:
+                        self.history.append([[movement], [fen]])
+                    else:
+                        self.history[-1][0].append(movement)
+                        self.history[-1][1].append(fen)
 
-            if add2history:
-                fen = self.numpy2fen(self.board)
-                if self.white_turn:
-                    self.history.append([[movement], [fen]])
-                else:
-                    self.history[-1][0].append(movement)
-                    self.history[-1][1].append(fen)
-
-            turn, _ = self.pointer
-            if not self.white_turn:
-                turn += 1
-            self.white_turn = not self.white_turn
-            self.pointer = (turn, self.white_turn)
-            return True, movement
+                turn, _ = self.pointer
+                if not self.white_turn:
+                    turn += 1
+                self.white_turn = not self.white_turn
+                self.pointer = (turn, self.white_turn)
+                return True, movement
         else:
             return False, ''
         
