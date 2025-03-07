@@ -155,14 +155,6 @@ class ChessBoard:
             in_coords[i] = self.array2logic(x, y)
         return in_coords
 
-    def intersection(self, set1:List, set2:List) -> List:
-        inter = []
-        inter = np.empty((0, 2), dtype=np.int64)
-        for elem in set1:
-            if elem in set2:
-                inter.append(elem)
-        return inter
-
     def allowed_movements(self, 
                           piece:str, 
                           position:str, 
@@ -209,8 +201,11 @@ class ChessBoard:
             piece_moves = self.raycast(x, y, self.line_vectors, white_turn, remove_own=remove_own)
         elif 'pawn' in piece:             
             if white_turn: 
-                piece_moves = np.array([[-1, 0]])
-                if x == 6: #Special movement for pawns in their starting rank
+                if self.board[x - 1, y] == 0: #There is no piece in foward movement
+                    piece_moves = np.array([[-1, 0]])
+                else:
+                    piece_moves = np.array([[0, 0]])
+                if x == 6 and self.board[4, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
                 if y + 1 < 8 and x - 1 >= 0:
                     if self.board[x - 1, y + 1] < 0: #There is an enemy piece
@@ -225,8 +220,11 @@ class ChessBoard:
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, yp - y]])))
 
             else: 
-                piece_moves = np.array([[1, 0]])
-                if x == 1: #Special movement for pawns in their starting rank
+                if self.board[x + 1, y] == 0: #There is no piece in foward movement
+                    piece_moves = np.array([[1, 0]])
+                else:
+                    piece_moves = np.array([[0, 0]])
+                if x == 1 and self.board[3, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
                 if y + 1 < 8 and x + 1 < 8:
                     if self.board[x + 1, y + 1] > 0: #There is an enemy piece
@@ -239,13 +237,13 @@ class ChessBoard:
                     xp, yp = self.logic2array(last_end)
                     if 'pawn' in last_piece and xp == 4 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
                         piece_moves = np.concatenate((piece_moves, np.array([[1, yp - y]])))
-            #piece_moves = remove_illegal(x, y, piece_moves, in_check, white_turn) #TODO Test this
+            
         else:
-            piece_moves = np.array([[0,0]])
+            piece_moves = np.array([[0, 0]])
 
         if in_check and 'king' not in piece: #If there is a check the piece can't move unless it can help the king
             piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
-
+        
         destinations = position + piece_moves
         legal_moves = [''] * len(destinations)
         for i, (dest_x, dest_y) in enumerate(destinations):
