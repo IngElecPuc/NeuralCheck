@@ -740,8 +740,8 @@ class ChessBoard:
                 movement += disambiguation
 
         return movement + end_position.lower()
-        
-    def read_move(self, play: str, white_player:bool) -> Tuple[str, str, str]:
+
+    def read_move(self, play: str, white_player: bool) -> Tuple[str, str, str]:
         """
         Transcribes a move from a chess like play to a triplet for the move method to execute.
         This method does the convertion without cheking if it is legal (castle).
@@ -756,72 +756,114 @@ class ChessBoard:
             end_position: A two-character string representing the destination position, e.g., 'f3'.
 
         """
+        play_stripped = play.replace('+', '').replace('#', '')
 
-        stripped_play = play.replace('+', '').replace('#', '')
-        if 'O' not in stripped_play: 
-            end_position = stripped_play[-2:]
-        elif 'O-O-O' in play: #Long castle, first this beacuse 'O-O' is contained in 'O-O-O'
-            if white_player:
-                piece = 'white king'
-                initial_position = 'e1'
-                end_position = 'c1'
-            else:
-                piece = 'black king'
-                initial_position = 'e8'
-                end_position = 'c8'
-            return piece, initial_position, end_position
-        elif 'O-O' in play: #Short Castle, it doesn't check if the movement is permited
-            if white_player:
-                piece = 'white king'
-                initial_position = 'e1'
-                end_position = 'g1'
-            else:
-                piece = 'black king'
-                initial_position = 'e8'
-                end_position = 'g8'
-            return piece, initial_position, end_position
+        if 'O-O' in play_stripped: #Castle moves
+            return self._parse_castle_move(play_stripped, white_player)
 
+        end_position = play_stripped[-2:] #For normal plays -> end_position is int las two characters
+        piece = self._parse_piece_from_move(play_stripped, white_player)
+        candidates = self._find_candidates(piece, end_position, white_player)
+        initial_position = self._resolve_candidate_disambiguation(piece, play_stripped, candidates)
+
+        return piece, initial_position, end_position
+
+    def _parse_castle_move(self, play_stripped: str, white_player: bool) -> Tuple[str, str, str]:
+        """
+        Process castle moves
+
+        Parameters:
+            play_stripped: A chess like play, e.g., 'Nf3' but withouth '+' or '#'
+            white_player: True is the calculations are done for white's player turn
+
+        Returns:
+            piece: A string representing the type of piece, e.g., 'knight', 'queen'.
+            initial_position: A two-character string representing the starting position, e.g., 'g1'.
+            end_position: A two-character string representing the destination position, e.g., 'f3'.
+        """
+        if 'O-O-O' in play_stripped:  #Long castle
+            if white_player:
+                return 'white king', 'e1', 'c1'
+            else:
+                return 'black king', 'e8', 'c8'
+        else:  #Short castle
+            if white_player:
+                return 'white king', 'e1', 'g1'
+            else:
+                return 'black king', 'e8', 'g8'
+
+    def _parse_piece_from_move(self, play_stripped: str, white_player: bool) -> str:
+        """
+        Determines piece type from notation
+        If is not specified it is a pawn.
+
+        Parameters:
+            play_stripped: A chess like play, e.g., 'Nf3' but withouth '+' or '#'
+            white_player: True is the calculations are done for white's player turn
+
+        Returns:
+            str: piece name
+        """
         piece = 'white ' if white_player else 'black '
-
-        if 'K' in play:
+        if 'K' in play_stripped:
             piece += 'king'
-        elif 'Q' in play:
+        elif 'Q' in play_stripped:
             piece += 'queen'
-        elif 'B' in play:
+        elif 'B' in play_stripped:
             piece += 'bishop'
-        elif 'N' in play:
+        elif 'N' in play_stripped:
             piece += 'knight'
-        elif 'R' in play:
+        elif 'R' in play_stripped:
             piece += 'rook'
         else:
             piece += 'pawn'
+        return piece
 
-        candidates = []
+    def _find_candidates(self, piece: str, end_position: str, white_player: bool) -> List[str]:
+        """
+        Search in self.possible_moves the positions from wich the right piece can move to target position 
+
+        Parameters:
+            piece: A string representing the type of piece, e.g., 'knight', 'queen'
+            end_position: A two-character string representing the destination position, e.g., 'f3'.
+            white_player: True is the calculations are done for white's player turn
+        """
         color = 'white' if white_player else 'black'
+        candidates = []
         for position, moves in self.possible_moves[color].items():
             if end_position in moves and self.what_in(position) == piece:
                 candidates.append(position)
 
-        if not candidates: #If last filter was too much, FIXME check if this is ncessesary when last test is complete
-            for pos, moves in self.possible_moves.items():
+        if not candidates: #if there are not candidates we look for those that can move and thats it
+            for position, moves in self.possible_moves[color].items():
                 if end_position in moves:
-                    candidates.append(pos)
+                    candidates.append(position)
+        return candidates
 
+    def _resolve_candidate_disambiguation(self, piece: str, play_stripped: str, candidates: List[str]) -> str:
+        """
+        In case there is more than one candidate for the starting position, 
+        a disambiguation logic is applied: for pawns, the origin column is used, 
+        and for other pieces, the piece information (e.g., its notation) is used.
+
+        Parameters:
+            piece: A string representing the type of piece, e.g., 'knight', 'queen'
+            play_stripped: A chess like play, e.g., 'Nf3' but withouth '+' or '#'
+            candidates: a list of candidate pieces
+
+        Returns:
+            str: piece name 
+        """
         if len(candidates) == 1:
-            initial_position = candidates[0]
-        else: 
-            if 'pawn' in piece: #Pawn disambiguation
+            return candidates[0]
+        else:
+            if 'pawn' in piece: #Find the candidate that matches the column indicated in the notation
                 for candidate in candidates:
-                    if candidate[0] == play[0]:
-                        initial_position = candidate
-                        break
-            else:
-                candidates_dict = {self.what_in(position) : position for position in candidates}
-                initial_position = candidates_dict.get(piece, candidates[0])
-
-        # TODO check for check or mate
-
-        return piece, initial_position, end_position
+                    if candidate[0] == play_stripped[0]:
+                        return candidate
+            else: #Attempt to disambiguate using the full description of the piece
+                candidates_dict = {self.what_in(position): position for position in candidates}
+                return candidates_dict.get(piece, candidates[0])
 
     def save_position(self, filename:str) -> None:
         """
@@ -979,7 +1021,6 @@ class ChessBoard:
         self.white_turn = white_player
         self.possible_moves = self.calculate_possible_moves()
         self.pointer = (turn, white_player)
-
 
 if __name__ == '__main__':
     board = ChessBoard()
