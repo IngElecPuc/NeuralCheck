@@ -182,7 +182,6 @@ class ChessBoard:
         #NOTE si el rey está en jaque las únicas piezas que se pueden mover son el mismo, y aquellas que lo protejen
         
         x, y                = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
-        position            = np.array([x, y])
         white_turn          = 'white' in piece
         if restrict_turn and (white_turn != self.white_turn):
             return []
@@ -245,7 +244,7 @@ class ChessBoard:
         if in_check and 'king' not in piece: #If there is a check the piece can't move unless it can help the king
             piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
         
-        destinations = position + piece_moves
+        destinations = np.array([x, y]) + piece_moves
         legal_moves = [''] * len(destinations)
         for i, (dest_x, dest_y) in enumerate(destinations):
             move_vector = piece_moves[i]
@@ -253,6 +252,9 @@ class ChessBoard:
                 legal_moves[i] = self.array2logic(dest_x, dest_y)
             else:
                 legal_moves[i] = self.array2logic(dest_x, dest_y)
+
+        if position in legal_moves: #Means that it didn't encounter new positions so we clean the answer
+            return []
 
         return legal_moves
     
@@ -326,126 +328,131 @@ class ChessBoard:
         Returns
             np.array: an array with all posible directions to travel acording to rules
         """
-        def squares_in(subset:List, set:List) -> bool:
-            belongs = True
-            for elem in subset:
-                belongs = belongs and elem in set
-            return belongs
+        def filter_out_of_bounds_and_friendly(vectors: np.array) -> np.array:
+            """
+            Filter movements that goes out of the board or that fall in own pieces
+            """
+            player_turn = 1 if white_turn else -1
+            valid_vectors = []
+            for vec in vectors:
+                dx, dy = vec
+                new_x, new_y = x + dx, y + dy
+                if not (0 <= new_x < BOARD_SIZE and 0 <= new_y < BOARD_SIZE):
+                    continue
+                if remove_own and player_turn * self.board[new_x, new_y] > 0:
+                    continue
+                valid_vectors.append(vec)
+            return np.array(valid_vectors)
 
-
-        player_turn = 1 if white_turn else -1
-        i = 0
-        while i < len(vectors):
-            dx, dy = vectors[i]            
-            if 0 > x + dx or x + dx >= BOARD_SIZE or 0 > y + dy or y + dy >= BOARD_SIZE: #Out of border
-                vectors = np.delete(vectors, i, axis=0)
-            elif player_turn * self.board[x + dx, y + dy] > 0 and remove_own: #There is a piece of its own
-                vectors = np.delete(vectors, i, axis=0)
+        def filter_castling_moves(vectors: np.array) -> np.array:
+            """
+            Apply castling restrictions for the king.
+            Remove castling moves when conditions that prevent it are met,
+            such as non-empty squares, check along the path, or if the piece (king or rook) has already moved.
+            """
+            elements_to_remove = []
+            king_moved = self.castle_flags['white king moved'] if white_turn else self.castle_flags['black king moved']
+            if in_check or king_moved:
+                elements_to_remove.extend([[0, 2], [0, -2]]) 
+            #Rook restrictions
+            if (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']):
+                if [0, -2] not in elements_to_remove:
+                    elements_to_remove.append([0, -2])
+            if (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']):
+                if [0, 2] not in elements_to_remove:
+                    elements_to_remove.append([0, 2])
+            #Empty squares restrictions
+            if white_turn:
+                if self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3 and [0, -2] not in elements_to_remove:
+                    elements_to_remove.append([0, -2])
+                if self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2 and [0, 2] not in elements_to_remove:
+                    elements_to_remove.append([0, 2])
             else:
-                i += 1
-        
+                if self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3 and [0, -2] not in elements_to_remove:
+                    elements_to_remove.append([0, -2])
+                if self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2 and [0, 2] not in elements_to_remove:
+                    elements_to_remove.append([0, 2])
+            #Attacked squares restrictions
+            def squares_in(subset: List[str], target_set: List[str]) -> bool:
+                return all(elem in target_set for elem in subset)
+
+            enemy_moves = [] if self.initializing else self.assess_ataqued_squares(not white_turn)
+            if white_turn:
+                if squares_in(['a1', 'b1', 'c1', 'd1'], enemy_moves) and [0, -2] not in elements_to_remove:
+                    elements_to_remove.append([0, -2])
+                if squares_in(['f1', 'g1', 'h1'], enemy_moves) and [0, 2] not in elements_to_remove:
+                    elements_to_remove.append([0, 2])
+            else:
+                if squares_in(['a8', 'b8', 'c8', 'd8'], enemy_moves) and [0, -2] not in elements_to_remove:
+                    elements_to_remove.append([0, -2])
+                if squares_in(['f8', 'g8', 'h8'], enemy_moves) and [0, 2] not in elements_to_remove:
+                    elements_to_remove.append([0, 2])
+            
+            filtered = [vec for vec in vectors if list(vec) not in elements_to_remove]
+            return np.array(filtered)
+
+        def filter_moves_in_check(vectors: np.array) -> np.array:
+            """
+            If the piece is not the king and is in check, only moves that capture 
+            the attacker or block the threat are allowed.
+            """
+            player_turn = 1 if white_turn else -1
+            enemy_color = 'black' if white_turn else 'white'
+            
+            # Locate the enemy king
+            king_indices = np.where(self.board == 6 * player_turn)
+            if king_indices[0].size == 0:
+                return vectors
+            xk, yk = king_indices[0].item(), king_indices[1].item()
+            kings_position = self.array2logic(xk, yk)
+            
+            enemy_possible_moves = self.calculate_possible_moves(in_check=False, remove_own=False)[enemy_color]
+            attackers = [pos for pos, moves in enemy_possible_moves.items() if kings_position in moves]
+            
+            if len(attackers) > 1:
+                return np.array([])  # If there is more than one attacker, the only option is to move the king.
+            
+            attacker_position = attackers[0]
+            
+            # If the attacking piece is a sliding piece, blocking its trajectory is allowed.
+            piece_rays = ['queen', 'bishop', 'rook']
+            attacker_type = self.what_in(attacker_position).split(' ')[1]
+            onray = np.empty((0, 2), dtype=np.int64)
+            
+            if attacker_type in piece_rays:
+                xa, ya = self.logic2array(attacker_position)
+                dir_vector = np.sign(np.array([xk - xa, yk - ya]))
+                ray = self.raycast(xa, ya, dir_vector, white_turn, remove_own=True)
+                path = {tuple((vec + np.array([xa, ya])).tolist()) for vec in ray}
+                my_moves = {tuple((np.array([x, y]) + vec).tolist()) for vec in vectors}
+                intersection = np.array([np.array(m) for m in my_moves.intersection(path)])
+                if intersection.size > 0:
+                    onray = intersection - np.array([x, y])
+            
+            # Only moves that capture the attacker are allowed.
+            filtered = []
+            for vec in vectors:
+                pos = self.array2logic(x + vec[0], y + vec[1])
+                if pos == attacker_position:
+                    filtered.append(vec)
+            
+            filtered = np.array(filtered)
+            if filtered.size and onray.size:
+                return np.concatenate((filtered, onray))
+            return filtered
+
+        vectors = filter_out_of_bounds_and_friendly(vectors) #Step 1: Filter out moves that are out of bounds or contain friendly pieces.
         if not remove_own:
             return vectors
-
-        if self.initializing:
-            enemy_moves = []
-        else: #Circular reference at the beginning
-            enemy_moves = self.assess_ataqued_squares(not white_turn)
-
-        piece_rays = ['queen', 'bishop', 'rook'] #Only this kind of pieces can generate pins
         
-        if is_king:
-            elements_to_remove = []
-            king_moved = self.castle_flags['white king moved' if white_turn else 'black king moved']                
-            if in_check or king_moved:
-                elements_to_remove = [[0,2], [0,-2]] #Erases last two movements that are meant for casteling
-            if (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']): #Removes Long Castle
-                if [0,-2] not in elements_to_remove:
-                    elements_to_remove.append([0,-2])
-            if (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']): #Removes Short Castle
-                if [0,2] not in elements_to_remove:
-                    elements_to_remove.append([0,2])
-            if white_turn and self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
-                if [0,-2] not in elements_to_remove:
-                    elements_to_remove.append([0,-2])
-            if white_turn and self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
-                if [0,2] not in elements_to_remove:
-                    elements_to_remove.append([0,2])
-            if not white_turn and self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3: #Not empty squares -> Removes Long Castle
-                if [0,-2] not in elements_to_remove:
-                    elements_to_remove.append([0,-2])
-            if not white_turn and self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2: #Not empty squares -> Removes Short Castle
-                if [0,2] not in elements_to_remove:
-                    elements_to_remove.append([0,2])
-            if white_turn and squares_in(['a1', 'b1', 'c1', 'd1'], enemy_moves): #Attacked squares -> Removes Long Castle
-                if [0,-2] not in elements_to_remove:
-                    elements_to_remove.append([0,-2])
-            if white_turn and squares_in(['f1', 'g1', 'h1'], enemy_moves): #Attacked squares -> Removes Short Castle 
-                if [0,2] not in elements_to_remove:
-                    elements_to_remove.append([0,2])
-            if not white_turn and squares_in(['a8', 'b8', 'c8', 'd8'], enemy_moves): #Attacked squares -> Removes Long Castle
-                if [0,-2] not in elements_to_remove:
-                    elements_to_remove.append([0,-2])
-            if not white_turn and squares_in(['f8', 'g8', 'h8'], enemy_moves): #Attacked squares -> Removes Short Castle 
-                if [0,2] not in elements_to_remove:
-                    elements_to_remove.append([0,2])
+        if is_king: #Step 2: Additional filtering depending on whether the piece is the king or if it is in check.
+            vectors = filter_castling_moves(vectors)
+            enemy_moves = [] if self.initializing else self.assess_ataqued_squares(not white_turn)
+            valid = [vec for vec in vectors if self.array2logic(x + vec[0], y + vec[1]) not in enemy_moves]
+            vectors = np.array(valid)
+        elif in_check:
+            vectors = filter_moves_in_check(vectors)
 
-            for elem in elements_to_remove:
-                indices = np.where((vectors == elem).all(axis=1))[0]
-                if indices.size > 0:
-                    vectors = np.delete(vectors, indices, axis=0)
-
-            i = 0
-            while i < len(vectors): #Only move to not ataqued squares
-                dx, dy = vectors[i]
-                position = self.array2logic(x + dx, y + dy)
-                if position in enemy_moves:
-                    vectors = np.delete(vectors, i, axis=0)
-                else:
-                    i += 1
-
-        elif in_check: #See if the piece can block the check o capture the attacker
-            xk, yk = np.where(self.board == 6 * player_turn) #Position of the enemy king
-            xk = xk.item()
-            yk = yk.item()
-            kings_position = self.array2logic(xk, yk)
-            atackers = []
-            enemy_color = 'black' if white_turn else 'white'
-            enemy_possible_moves = self.calculate_possible_moves(in_check=False, remove_own=False)[enemy_color] #Avoid cero attacker error for in_check constriction
-            for attacker_position, moves in enemy_possible_moves.items():
-                if kings_position in moves:
-                    atackers.append(attacker_position)
-
-            if len(atackers) > 1: #More than one piece attacking the king, only option is to move the king
-                return np.array([])
-
-            attacker_position = atackers[0]
-            moves = enemy_possible_moves[attacker_position]
-            xa, ya = self.logic2array(attacker_position)
-            piece_type = self.what_in(attacker_position)
-            my_moves = {tuple(row) for row in np.array([[x, y]]) + vectors}
-            onray = np.empty((0, 2), dtype=np.int64)
-            if piece_type.split(' ')[1] in piece_rays: #If the piece spans a ray can pin other pieces
-                dir = np.array([[xk - xa, yk - ya]])
-                dir = np.sign(dir)
-                ray = self.raycast(xa, ya, dir, white_turn, remove_own=True)
-                path = {tuple(row) for row in ray + np.array([xa, ya])}
-                intersection = my_moves.intersection(path)
-                intersection = np.array(list(intersection))
-                intersection = intersection if intersection.size > 0 else np.array([[0, 0]])
-                onray = intersection - np.array([[x, y]]) #Actualizing 
-
-            #if attacker_position in king_moves: 
-            i = 0 
-            while i < len(vectors): #To help the king the piece must capture the attacker, we eliminate movements that can't do that
-                dx, dy = vectors[i]
-                position = self.array2logic(x + dx, y + dy)
-                if position != attacker_position:
-                    vectors = np.delete(vectors, i, axis=0)
-                else:
-                    i += 1
-            vectors = np.concatenate((vectors, onray))
-        
         return vectors
 
     def assess_king_status(self, white_player:bool, restrict_turn:bool=True) -> int:
