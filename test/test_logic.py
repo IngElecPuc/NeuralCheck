@@ -2,8 +2,11 @@ import os
 import random
 import yaml
 import numpy as np
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.neuralcheck.logic import ChessBoard
 from prettytable import PrettyTable
+
 
 def test_read_move(**kwargs):
     path = 'test/test_games'
@@ -165,17 +168,23 @@ def test_make_move(**kwargs):
     else:
         table = PrettyTable()
         table.field_names = ['File', 'Precision']
-        for file in files:
+        print("Se procede a iniciar las pruebas")
+        for i, file in enumerate(files):
             filename = os.path.join(path, file)
             with open(filename, "r", encoding="utf-8") as yamlfile:
                 history = yaml.safe_load(yamlfile)
             if len(history[-1][0]) == 1:
                 history[-1][0].append('quit')
-            #try:
-            precision, board = test_one(history)
-            #except:
-            #    print(f'Error en archivo {file}')
+            try:
+                precision, board = test_one(history)
+            except Exception as error:
+                print(f"Error en archivo {file}.'\nSe levanta la excepción {error}")
+                raise error
+            percent = (i + 1) / len(files)
+            sys.stdout.write(f"\rProgreso: {percent:.2f}%")
+            sys.stdout.flush()
             table.add_row([file, f'{precision:.2%}'])
+
         print(table)
         
 def check_for(**kwargs):
@@ -275,7 +284,7 @@ if __name__ == '__main__':
 
 """
 from test.test_logic import *
-board = test_make_move()
+test_make_move()
 self = ChessBoard()
 #make_moves(self, [['e4', 'e5'], ['Nf3', 'Nc6'], ['Bc4', 'Nf6'], ['Ng5', 'Bc5'], ['Bf7+']]) #Italiana hasta jaque del alfil
 #make_moves(self, [['e4', 'e6'], ['d4', 'd5'], ['e5', 'f6'], ['Nf3', 'fxe5'], ['Nxe5', 'Nc6'], ['Qh5+']]) #Francesa hasta jaque de la reina

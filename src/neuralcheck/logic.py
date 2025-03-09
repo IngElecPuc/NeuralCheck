@@ -6,6 +6,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 from neuralcheck.bitboard import ChessBitboard
 from typing import Tuple, List, Dict
+BOARD_SIZE = 8
 
 class ChessBoard:
     def __init__(self):
@@ -46,7 +47,7 @@ class ChessBoard:
         """
         Clears all history and pieces from the board
         """
-        self.board = np.zeros((8,8), dtype=np.int64)
+        self.board = np.zeros((BOARD_SIZE,BOARD_SIZE), dtype=np.int64)
         self.history = []
         self.last_turn = (None, None, None)
         self.castle_flags = {
@@ -69,7 +70,7 @@ class ChessBoard:
             Tuple(int, int): two ints representing the position in numpy index coordinates
         """
         col, row = position[0], int(position[1])
-        x = 8 - row
+        x = BOARD_SIZE - row
         y = self._cols2int[col]
         return x, y
     
@@ -85,7 +86,7 @@ class ChessBoard:
             str: a string of size 2 with a character from a to h and a number from 1 to 8, e.g., 'e4'
         """
         col = self._int2cols[y]
-        row = 8 - x
+        row = BOARD_SIZE - x
         return f'{col}{row}'
 
     def set_piece(self, piece:str, position:str) -> None:
@@ -207,7 +208,7 @@ class ChessBoard:
                     piece_moves = np.array([[0, 0]])
                 if x == 6 and self.board[4, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
-                if y + 1 < 8 and x - 1 >= 0:
+                if y + 1 < BOARD_SIZE and x - 1 >= 0:
                     if self.board[x - 1, y + 1] < 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, 1]])))
                 if y - 1 >= 0 and x - 1 >= 0:
@@ -226,10 +227,10 @@ class ChessBoard:
                     piece_moves = np.array([[0, 0]])
                 if x == 1 and self.board[3, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
-                if y + 1 < 8 and x + 1 < 8:
+                if y + 1 < BOARD_SIZE and x + 1 < BOARD_SIZE:
                     if self.board[x + 1, y + 1] > 0: #There is an enemy piece
                         piece_moves = np.concatenate((piece_moves, np.array([[1, 1]])))
-                if y - 1 >= 0 and x + 1 < 8:
+                if y - 1 >= 0 and x + 1 < BOARD_SIZE:
                     if self.board[x + 1, y - 1] > 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
                 if x == 4: #En passant
@@ -274,15 +275,15 @@ class ChessBoard:
         moves = np.empty((0, 2), dtype=np.int64)
         player_turn = 1 if white_turn else -1
         for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
-            for i in range(1, 8): #We advance i units in the desired direction and check for obstacles at each step.
+            for i in range(1, BOARD_SIZE): #We advance i units in the desired direction and check for obstacles at each step.
                 xp, yp = x + i*dx, y + i*dy
-                if 0 <= xp < 8 and 0 <= yp < 8: #Ensure movement stays within the board
+                if 0 <= xp < BOARD_SIZE and 0 <= yp < BOARD_SIZE: #Ensure movement stays within the board
                     if player_turn * self.board[xp, yp] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
                         moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
                         if player_turn * self.board[xp, yp] < 0: #Stops, but allows capturing; but first check for pinned pieces.
-                            for j in range(i + 1, 8):
+                            for j in range(i + 1, BOARD_SIZE):
                                 x_check, y_check = x + j*dx, y + j*dy
-                                if 0 <= x_check < 8 and 0 <= y_check < 8:
+                                if 0 <= x_check < BOARD_SIZE and 0 <= y_check < BOARD_SIZE:
                                     if player_turn * self.board[x_check, y_check] < 0 and np.abs(self.board[x_check, y_check]) != 6: #There is another enemy piece which is not a king -> nothing hapens
                                         break
                                     if player_turn * self.board[x_check, y_check] == -6 and self.array2logic(xp, yp) not in self.pinned_pieces: #There is an enemy king behind the lines so this piece must be pinned
@@ -336,7 +337,7 @@ class ChessBoard:
         i = 0
         while i < len(vectors):
             dx, dy = vectors[i]            
-            if 0 > x + dx or x + dx >= 8 or 0 > y + dy or y + dy >= 8: #Out of border
+            if 0 > x + dx or x + dx >= BOARD_SIZE or 0 > y + dy or y + dy >= BOARD_SIZE: #Out of border
                 vectors = np.delete(vectors, i, axis=0)
             elif player_turn * self.board[x + dx, y + dy] > 0 and remove_own: #There is a piece of its own
                 vectors = np.delete(vectors, i, axis=0)
@@ -404,13 +405,14 @@ class ChessBoard:
                     i += 1
 
         elif in_check: #See if the piece can block the check o capture the attacker
-            xk, yk = np.where(self.board == 6 * player_turn)
+            xk, yk = np.where(self.board == 6 * player_turn) #Position of the enemy king
             xk = xk.item()
             yk = yk.item()
             kings_position = self.array2logic(xk, yk)
-            king_moves = self.possible_moves[kings_position]
             atackers = []
-            for attacker_position, moves in self.possible_moves.items():
+            enemy_color = 'black' if white_turn else 'white'
+            enemy_possible_moves = self.calculate_possible_moves(in_check=False, remove_own=False)[enemy_color] #Avoid cero attacker error for in_check constriction
+            for attacker_position, moves in enemy_possible_moves.items():
                 if kings_position in moves:
                     atackers.append(attacker_position)
 
@@ -418,7 +420,7 @@ class ChessBoard:
                 return np.array([])
 
             attacker_position = atackers[0]
-            moves = self.possible_moves[attacker_position]
+            moves = enemy_possible_moves[attacker_position]
             xa, ya = self.logic2array(attacker_position)
             piece_type = self.what_in(attacker_position)
             my_moves = {tuple(row) for row in np.array([[x, y]]) + vectors}
@@ -431,7 +433,7 @@ class ChessBoard:
                 intersection = my_moves.intersection(path)
                 intersection = np.array(list(intersection))
                 intersection = intersection if intersection.size > 0 else np.array([[0, 0]])
-                onray = intersection - np.array([[x, y]]) #Atualizing 
+                onray = intersection - np.array([[x, y]]) #Actualizing 
 
             #if attacker_position in king_moves: 
             i = 0 
@@ -461,7 +463,7 @@ class ChessBoard:
             friendly_help: a dictionary with all posible movements and positions
             of frendly pieces that can bloc the check or the mate
         """
-        #breakpoint()
+        enemy_color     = 'black' if white_player else 'white'
         player_turn     = 1 if white_player else -1 #Check for reverse code
         x, y            = np.where(self.board == 6 * player_turn)
         x, y            = x.item(), y.item()
@@ -469,7 +471,7 @@ class ChessBoard:
         enemy_movements = {}
         friendly_help   = {} #TODO Pin pieces
         danger          = 0
-        for pos, moves in self.possible_moves.items():
+        for pos, moves in self.possible_moves[enemy_color].items():
             if kings_position in moves:
                 danger += 1
                 enemy_movements[pos] = moves
@@ -490,10 +492,10 @@ class ChessBoard:
         Calculates and updates all movements that each piece can attack
         """
         possible_moves = self.calculate_possible_moves(remove_own=False)
-        player = 'white' if white_player else 'black'
+        color = 'white' if white_player else 'black'
         ataqued_squares = []
-        for position, moves in possible_moves.items():
-            if player in self.what_in(position):
+        for position, moves in possible_moves[color].items():
+            if color in self.what_in(position):
                 ataqued_squares += moves
 
         unique_ataqued_squares = []
@@ -533,20 +535,21 @@ class ChessBoard:
             Dict: a diccionary with position entry, and a list of positions for values indicating
             where is legal that the piece in the key can move
         """        
-        possible_moves = {}
-        for x in range(8):
-            for y in range(8):
+        possible_moves = {'white': {}, 'black':{}}
+        for x in range(BOARD_SIZE):
+            for y in range(BOARD_SIZE):
                 if self.board[x, y] != 0:
-                    piece = 'white ' if self.board[x, y] > 0 else 'black '
+                    color = 'white' if self.board[x, y] > 0 else 'black'
+                    piece = color + ' '
                     piece += self.num2name[np.abs(self.board[x, y]).item()]
                     position = self.array2logic(x,y)
                     movements = self.allowed_movements(piece, position, restrict_turn=False, in_check=in_check, remove_own=remove_own)
                     if len(movements) > 0:
-                        possible_moves[position] = movements
+                        possible_moves[color][position] = movements
         
-        for key in list(possible_moves.keys()): #Filtering pinned pieces
+        for key in list(possible_moves[color].keys()): #Filtering pinned pieces
             if key in self.pinned_pieces:
-                del possible_moves[key]
+                del possible_moves[color][key]
 
         return possible_moves
 
@@ -601,8 +604,9 @@ class ChessBoard:
         if np.abs(king_status) == 2:
             return False, ''
 
-        if initial_position in self.possible_moves.keys():
-            if end_position in self.possible_moves[initial_position]:
+        moving_color = 'white' if 'white' in piece else 'black'
+        if initial_position in self.possible_moves[moving_color]:
+            if end_position in self.possible_moves[moving_color][initial_position]:
                 movement = self.notation_from_move(piece, initial_position, end_position)
                 last_piece, last_init, last_end = self.last_turn
                 self.last_turn = (piece, initial_position, end_position) #Enables en passant
@@ -793,7 +797,8 @@ class ChessBoard:
             piece += 'pawn'
 
         candidates = []
-        for position, moves in self.possible_moves.items():
+        color = 'white' if white_player else 'black'
+        for position, moves in self.possible_moves[color].items():
             if end_position in moves and self.what_in(position) == piece:
                 candidates.append(position)
 
@@ -826,8 +831,8 @@ class ChessBoard:
             filename: A string with the name and route to the target file
         """
         board = {}
-        for x in range(8):
-            for y in range(8):
+        for x in range(BOARD_SIZE):
+            for y in range(BOARD_SIZE):
                 position    = self.array2logic(x,y)
                 piece       = self.what_in(position)
                 if 'Empty' not in piece:

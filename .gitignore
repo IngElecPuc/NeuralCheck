@@ -9,3 +9,4 @@ src/neuralcheck/utils/__pycache__/
 test/__pycache__/
 .ipynb_checkpoints/
 Debugs.ipynb
+.vscode/
