@@ -244,6 +244,9 @@ class ChessBoard:
         if in_check and 'king' not in piece: #If there is a check the piece can't move unless it can help the king
             piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
         
+        if type(piece_moves) == List: #FIXME sometimes piece_moves = [] when there are not movements other times piece_moves = np.array([[0, 0]])
+            piece_moves = piece_moves if piece_moves else np.array([[0, 0]])
+
         destinations = np.array([x, y]) + piece_moves
         legal_moves = [''] * len(destinations)
         for i, (dest_x, dest_y) in enumerate(destinations):

@@ -19,6 +19,9 @@ class ChessUI:
 
         self.master     = master
         self.rotation   = rotation #False if White's view, True for Black's view
+        self.white_time = 180  
+        self.black_time = 180  
+        self.increments = 0
         self.logic      = ChessBoard()
 
         master.geometry(f"{self.config['Size']['width']}x{self.config['Size']['height']}")
@@ -41,6 +44,17 @@ class ChessUI:
                                     width=self.cell_size * 3,
                                     height=self.cell_size * 8)
         self.offboard.grid(row=0, column=0)
+        self.clock_white_id = self.offboard.create_text( #TODO actualize position with rotation
+            self.cell_size * 1.5, self.cell_size, 
+            text="White: 03:00", 
+            font=("Arial", 12, "bold")
+        )
+        self.clock_black_id = self.offboard.create_text(
+            self.cell_size * 1.5, self.cell_size * 7, 
+            text="Black: 03:00", 
+            font=("Arial", 12, "bold")
+        )
+
         #Chess grafic board
         self.board      = tk.Canvas(self.panel_canvas, 
                                     width=self.cell_size * 8, 
@@ -103,6 +117,8 @@ class ChessUI:
         self.coordinates = True
         self.draw_board()
         self.board.bind("<Button-1>", self.on_click)
+
+        self.update_clock()
 
     def send_text(self, event): #HACK Borrar en el futuro
             texto = self.entry.get().strip()  # Evitar entradas vacías
@@ -399,14 +415,40 @@ class ChessUI:
         self.board.delete("all")
         self.draw_board()              
 
+    def update_clock(self) -> None:
+        """
+        Decrement clock one second, and then program another run of this method
+        """
+        if self.logic.white_turn:
+            if self.white_time > 0:
+                self.white_time += self.increments
+                self.white_time -= 1
+        else:
+            if self.black_time > 0:
+                self.black_time += self.increments
+                self.black_time -= 1
+
+        white_minutes, white_seconds = divmod(self.white_time, 60)
+        black_minutes, black_seconds = divmod(self.black_time, 60)
+        self.offboard.itemconfig(self.clock_white_id, text=f"White: {white_minutes:02d}:{white_seconds:02d}")
+        self.offboard.itemconfig(self.clock_black_id, text=f"Black: {black_minutes:02d}:{black_seconds:02d}")
+
+        if self.white_time > 0 and self.black_time > 0: #If both players have time, we program the actualization in one second
+            self.master.after(1000, self.update_clock)
+
+
     def new_game(self) -> None:
         """
         Clears the current board, and its logic
         """
         self.logic = ChessBoard()
+        self.white_time = 180  
+        self.black_time = 180  
+        self.increments = 0
         self.board.delete("all")
         self.draw_board()
         self.draw_moves(see_end=False)
+        self.update_clock()
 
     def load_game(self) -> None:
         """
