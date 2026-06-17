@@ -6,7 +6,18 @@ from tkinter import filedialog
 import yaml
 from PIL import Image, ImageOps, ImageTk
 
-from neuralcheck.application.clock import ChessClock
+from neuralcheck.application.clock import (
+    AUTO_START,
+    BLACK_SIGNAL_START,
+    BLITZ,
+    BULLET,
+    CORRESPONDENCE,
+    CORRESPONDENCE_CATEGORY,
+    RAPID,
+    TOURNAMENT,
+    ChessClock,
+    TIME_CONTROLS_BY_CATEGORY,
+)
 from neuralcheck.application.game_controller import GameController, MoveAttempt
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.ui_position_editor import PositionEditorWindow
@@ -40,6 +51,8 @@ class ChessUI:
         self.theory_window: Optional[TheoryWindow] = None
         self.clock = ChessClock.rapid_3_0()
         self.clock_after_id: Optional[str] = None
+        self.clock_control_var = tk.StringVar(master, value=self.clock.mode)
+        self.clock_start_policy_var = tk.StringVar(master, value=self.clock.start_policy)
         self.coordinates = True
 
         master.rowconfigure(0, weight=1)
@@ -85,9 +98,55 @@ class ChessUI:
         archivo_menu.add_separator()
         archivo_menu.add_command(label="Salir", command=master.quit)
 
+        settings_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Configuración", menu=settings_menu)
+        clock_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Reloj", menu=clock_menu)
+        self._build_clock_menu(clock_menu)
+
         theory_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Teoría", menu=theory_menu)
         theory_menu.add_command(label="Abrir panel de teoría", command=self.open_theory_panel)
+
+    def _build_clock_menu(self, clock_menu: tk.Menu) -> None:
+        grouped_controls = (
+            ("Bala", BULLET),
+            ("Blitz", BLITZ),
+            ("Rápida", RAPID),
+            ("FIDE", TOURNAMENT),
+            ("Correspondencia", CORRESPONDENCE_CATEGORY),
+        )
+        for label, category in grouped_controls:
+            submenu = tk.Menu(clock_menu, tearoff=0)
+            clock_menu.add_cascade(label=label, menu=submenu)
+            for control in TIME_CONTROLS_BY_CATEGORY[category]:
+                submenu.add_radiobutton(
+                    label=control.label,
+                    variable=self.clock_control_var,
+                    value=control.key,
+                    command=lambda key=control.key: self.set_clock_control(key),
+                )
+
+        clock_menu.add_separator()
+        start_menu = tk.Menu(clock_menu, tearoff=0)
+        clock_menu.add_cascade(label="Inicio", menu=start_menu)
+        start_menu.add_radiobutton(
+            label="Nueva partida inicia el reloj",
+            variable=self.clock_start_policy_var,
+            value=AUTO_START,
+            command=lambda: self.set_clock_start_policy(AUTO_START),
+        )
+        start_menu.add_radiobutton(
+            label="Esperar señal de negras",
+            variable=self.clock_start_policy_var,
+            value=BLACK_SIGNAL_START,
+            command=lambda: self.set_clock_start_policy(BLACK_SIGNAL_START),
+        )
+        start_menu.add_command(label="Dar señal para iniciar blancas", command=self.signal_clock_start)
+
+        clock_menu.add_separator()
+        clock_menu.add_command(label="Pausar reloj", command=self.pause_clock)
+        clock_menu.add_command(label="Reanudar reloj", command=self.resume_clock)
 
     def _build_layout(self, master) -> None:
         self.main_frame = tk.Frame(master)
@@ -126,14 +185,22 @@ class ChessUI:
         self.clock_white_id = self.offboard.create_text(
             self.cell_size * 1.5,
             self.cell_size,
-            text="White: 03:00",
+            text="Blancas: 03:00",
             font=("Arial", 12, "bold"),
         )
         self.clock_black_id = self.offboard.create_text(
             self.cell_size * 1.5,
             self.cell_size * 7,
-            text="Black: 03:00",
+            text="Negras: 03:00",
             font=("Arial", 12, "bold"),
+        )
+        self.clock_status_id = self.offboard.create_text(
+            self.cell_size * 1.5,
+            self.cell_size * 4,
+            text="Blitz 3+0",
+            font=("Arial", 9),
+            width=self.cell_size * 2.8,
+            justify="center",
         )
 
         self.board = tk.Canvas(
@@ -464,11 +531,18 @@ class ChessUI:
 
         result = self.controller.click_square(target_position, promotion_provider=self.pawn_promotion)
         if result.moved:
+            self._on_live_move_completed(result)
             self.draw_moves()
         elif result.invalid_reason in {"illegal_move", "illegal_replay_move"}:
             self._print_invalid_move(result)
 
         self.refresh_board()
+
+    def _on_live_move_completed(self, result: MoveAttempt) -> None:
+        if result.piece is None:
+            return
+        self.clock.on_move_completed(white_player=result.piece.startswith("white "))
+        self._render_clock()
 
     def _print_invalid_move(self, result: MoveAttempt) -> None:
         print("Movimiento inválido")
@@ -525,12 +599,38 @@ class ChessUI:
         self.theory_controller.close()
         self.master.destroy()
 
-    def set_rapid_clock(self) -> None:
-        self.clock.set_rapid_3_0()
+    def set_clock_control(self, control_key: str) -> None:
+        self.clock.set_time_control(control_key)
+        self.clock_control_var.set(control_key)
+        self.clock_start_policy_var.set(self.clock.start_policy)
+        self.start_clock()
+
+    def set_clock_start_policy(self, start_policy: str) -> None:
+        self.clock.set_start_policy(start_policy)
+        self.clock_start_policy_var.set(start_policy)
+        self.start_clock()
+
+    def signal_clock_start(self) -> None:
+        self.clock.signal_start()
+        self.start_clock()
+
+    def pause_clock(self) -> None:
+        self.clock.pause()
+        self.start_clock()
+
+    def resume_clock(self) -> None:
+        self.clock.resume()
+        self.start_clock()
+
+    def reset_selected_clock_for_game(self) -> None:
+        if self.clock_control_var.get() == CORRESPONDENCE:
+            self.clock_control_var.set("blitz_3_0")
+        self.clock.set_time_control(self.clock_control_var.get())
+        self.clock.set_start_policy(self.clock_start_policy_var.get())
         self.start_clock()
 
     def set_correspondence_clock(self) -> None:
-        self.clock.set_correspondence()
+        self.clock.set_time_control(CORRESPONDENCE)
         self.start_clock()
 
     def start_clock(self) -> None:
@@ -561,6 +661,7 @@ class ChessUI:
         if not snapshot.visible:
             self.offboard.itemconfig(self.clock_white_id, text="", state="hidden")
             self.offboard.itemconfig(self.clock_black_id, text="", state="hidden")
+            self.offboard.itemconfig(self.clock_status_id, text="", state="hidden")
             return
 
         self.offboard.itemconfig(
@@ -573,6 +674,11 @@ class ChessUI:
             text=snapshot.label_for_black(),
             state="normal",
         )
+        self.offboard.itemconfig(
+            self.clock_status_id,
+            text=snapshot.status_label(),
+            state="normal",
+        )
 
     def refresh_board(self) -> None:
         self.board.delete("all")
@@ -580,7 +686,7 @@ class ChessUI:
 
     def new_game(self) -> None:
         self.controller.new_game()
-        self.set_rapid_clock()
+        self.reset_selected_clock_for_game()
         self.refresh_board()
         self.draw_moves(see_end=False)
 
@@ -594,7 +700,7 @@ class ChessUI:
             return
 
         self.controller.load_game(filename)
-        self.set_rapid_clock()
+        self.reset_selected_clock_for_game()
         self.refresh_board()
         self.draw_moves(see_beginning=True, see_end=False)
 
