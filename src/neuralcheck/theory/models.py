@@ -26,6 +26,8 @@ class TheoryBook:
     root_node_id: Optional[str] = None
     source_type: str = THEORY_SOURCE_INDEPENDENT
     initial_moves: Tuple[str, ...] = ()
+    map_backward_depth: int = 2
+    map_forward_depth: int = 4
 
     @property
     def is_synchronized_line(self) -> bool:
@@ -45,6 +47,8 @@ class TheoryNode:
     captured_pieces: Optional[str]
     created_at: str
     updated_at: str
+    layout_x: Optional[float] = None
+    layout_y: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +108,8 @@ class TheoryMapNode:
     evaluation: Optional[str]
     depth: int
     is_selected: bool = False
+    layout_x: Optional[float] = None
+    layout_y: Optional[float] = None
 
 
 @dataclass(frozen=True)

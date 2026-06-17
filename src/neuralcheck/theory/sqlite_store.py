@@ -71,11 +71,12 @@ class SQLiteTheoryGraphStore:
             self._connection.execute(
                 """
                 INSERT INTO theory_books (
-                    id, name, source_type, initial_moves, created_at, updated_at
+                    id, name, source_type, initial_moves,
+                    map_backward_depth, map_forward_depth, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (book_id, clean_name, clean_source, clean_initial_moves, now, now),
+                (book_id, clean_name, clean_source, clean_initial_moves, 2, 4, now, now),
             )
         book = self.get_book(book_id)
         if book is None:
@@ -127,6 +128,31 @@ class SQLiteTheoryGraphStore:
                 WHERE id = ?
                 """,
                 (clean_source, clean_initial_moves, now, book_id),
+            )
+        book = self.get_book(book_id)
+        if book is None:
+            raise RuntimeError("Updated theory book could not be read back")
+        return book
+
+    def update_book_map_depths(
+        self,
+        book_id: str,
+        *,
+        backward_depth: int,
+        forward_depth: int,
+    ) -> TheoryBook:
+        self._require_existing_book(book_id)
+        clean_backward = self._require_depth(backward_depth, "backward_depth")
+        clean_forward = self._require_depth(forward_depth, "forward_depth")
+        now = self._now()
+        with self._connection:
+            self._connection.execute(
+                """
+                UPDATE theory_books
+                SET map_backward_depth = ?, map_forward_depth = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (clean_backward, clean_forward, now, book_id),
             )
         book = self.get_book(book_id)
         if book is None:
@@ -238,6 +264,52 @@ class SQLiteTheoryGraphStore:
             raise RuntimeError("Updated theory node could not be read back")
         return node
 
+    def update_node_layout(
+        self,
+        node_id: str,
+        *,
+        layout_x: Optional[float],
+        layout_y: Optional[float],
+    ) -> TheoryNode:
+        self._require_existing_node(node_id)
+        clean_x = self._clean_optional_float(layout_x, "layout_x")
+        clean_y = self._clean_optional_float(layout_y, "layout_y")
+        now = self._now()
+        with self._connection:
+            self._connection.execute(
+                """
+                UPDATE theory_nodes
+                SET layout_x = ?, layout_y = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (clean_x, clean_y, now, node_id),
+            )
+        node = self.get_node(node_id)
+        if node is None:
+            raise RuntimeError("Updated theory node layout could not be read back")
+        return node
+
+    def update_node_layouts(self, positions: dict[str, tuple[float, float]]) -> None:
+        if not positions:
+            return
+        now = self._now()
+        with self._connection:
+            for node_id, (layout_x, layout_y) in positions.items():
+                self._require_existing_node(node_id)
+                self._connection.execute(
+                    """
+                    UPDATE theory_nodes
+                    SET layout_x = ?, layout_y = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        self._clean_optional_float(layout_x, "layout_x"),
+                        self._clean_optional_float(layout_y, "layout_y"),
+                        now,
+                        node_id,
+                    ),
+                )
+
     def add_child(
         self,
         parent_node_id: str,
@@ -310,6 +382,8 @@ class SQLiteTheoryGraphStore:
                 n.name,
                 n.evaluation,
                 n.captured_pieces,
+                n.layout_x AS node_layout_x,
+                n.layout_y AS node_layout_y,
                 n.created_at AS node_created_at,
                 n.updated_at AS node_updated_at
             FROM theory_edges e
@@ -340,6 +414,8 @@ class SQLiteTheoryGraphStore:
                 n.name,
                 n.evaluation,
                 n.captured_pieces,
+                n.layout_x AS node_layout_x,
+                n.layout_y AS node_layout_y,
                 n.created_at AS node_created_at,
                 n.updated_at AS node_updated_at
             FROM theory_edges e
@@ -429,9 +505,13 @@ class SQLiteTheoryGraphStore:
                     name TEXT NOT NULL UNIQUE,
                     source_type TEXT NOT NULL DEFAULT 'independent_position',
                     initial_moves TEXT NOT NULL DEFAULT '[]',
+                    map_backward_depth INTEGER NOT NULL DEFAULT 2,
+                    map_forward_depth INTEGER NOT NULL DEFAULT 4,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    CHECK (source_type IN ('synchronized_line', 'independent_position'))
+                    CHECK (source_type IN ('synchronized_line', 'independent_position')),
+                    CHECK (map_backward_depth BETWEEN 0 AND 50),
+                    CHECK (map_forward_depth BETWEEN 1 AND 50)
                 );
 
                 CREATE TABLE IF NOT EXISTS theory_nodes (
@@ -442,6 +522,8 @@ class SQLiteTheoryGraphStore:
                     name TEXT,
                     evaluation TEXT,
                     captured_pieces TEXT,
+                    layout_x REAL,
+                    layout_y REAL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (book_id) REFERENCES theory_books(id) ON DELETE CASCADE,
@@ -499,9 +581,9 @@ class SQLiteTheoryGraphStore:
                 """
                 INSERT INTO theory_nodes (
                     id, book_id, fen, side_to_move, name,
-                    evaluation, captured_pieces, created_at, updated_at
+                    evaluation, captured_pieces, layout_x, layout_y, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     node_id,
@@ -511,6 +593,8 @@ class SQLiteTheoryGraphStore:
                     self._clean_optional_text(name),
                     self._clean_optional_text(evaluation),
                     self._clean_optional_text(captured_pieces),
+                    None,
+                    None,
                     now,
                     now,
                 ),
@@ -542,21 +626,39 @@ class SQLiteTheoryGraphStore:
         return self._edge_from_row(row)
 
     def _ensure_book_source_columns(self) -> None:
-        columns = {
+        book_columns = {
             row["name"]
             for row in self._connection.execute("PRAGMA table_info(theory_books)").fetchall()
         }
+        node_columns = {
+            row["name"]
+            for row in self._connection.execute("PRAGMA table_info(theory_nodes)").fetchall()
+        }
         with self._connection:
-            if "source_type" not in columns:
+            if "source_type" not in book_columns:
                 self._connection.execute(
                     "ALTER TABLE theory_books "
                     "ADD COLUMN source_type TEXT NOT NULL DEFAULT 'independent_position'"
                 )
-            if "initial_moves" not in columns:
+            if "initial_moves" not in book_columns:
                 self._connection.execute(
                     "ALTER TABLE theory_books "
                     "ADD COLUMN initial_moves TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "map_backward_depth" not in book_columns:
+                self._connection.execute(
+                    "ALTER TABLE theory_books "
+                    "ADD COLUMN map_backward_depth INTEGER NOT NULL DEFAULT 2"
+                )
+            if "map_forward_depth" not in book_columns:
+                self._connection.execute(
+                    "ALTER TABLE theory_books "
+                    "ADD COLUMN map_forward_depth INTEGER NOT NULL DEFAULT 4"
+                )
+            if "layout_x" not in node_columns:
+                self._connection.execute("ALTER TABLE theory_nodes ADD COLUMN layout_x REAL")
+            if "layout_y" not in node_columns:
+                self._connection.execute("ALTER TABLE theory_nodes ADD COLUMN layout_y REAL")
 
     @staticmethod
     def _require_source_type(value: str) -> str:
@@ -566,6 +668,26 @@ class SQLiteTheoryGraphStore:
                 "source_type must be 'synchronized_line' or 'independent_position'"
             )
         return clean_value
+
+    @staticmethod
+    def _require_depth(value: int, label: str) -> int:
+        try:
+            clean_value = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be an integer") from exc
+        minimum = 0 if label == "backward_depth" else 1
+        if clean_value < minimum or clean_value > 50:
+            raise ValueError(f"{label} must be between {minimum} and 50")
+        return clean_value
+
+    @staticmethod
+    def _clean_optional_float(value: Optional[float], label: str) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be numeric") from exc
 
     @staticmethod
     def _serialize_initial_moves(initial_moves: Tuple[str, ...]) -> str:
@@ -625,6 +747,8 @@ class SQLiteTheoryGraphStore:
             initial_moves=self._deserialize_initial_moves(
                 row["initial_moves"] if "initial_moves" in row.keys() else "[]"
             ),
+            map_backward_depth=int(row["map_backward_depth"]) if "map_backward_depth" in row.keys() else 2,
+            map_forward_depth=int(row["map_forward_depth"]) if "map_forward_depth" in row.keys() else 4,
         )
 
     @staticmethod
@@ -639,6 +763,8 @@ class SQLiteTheoryGraphStore:
             captured_pieces=row["captured_pieces"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            layout_x=row["layout_x"] if "layout_x" in row.keys() else None,
+            layout_y=row["layout_y"] if "layout_y" in row.keys() else None,
         )
 
     @staticmethod
@@ -676,6 +802,8 @@ class SQLiteTheoryGraphStore:
             captured_pieces=row["captured_pieces"],
             created_at=row["node_created_at"],
             updated_at=row["node_updated_at"],
+            layout_x=row["node_layout_x"] if "node_layout_x" in row.keys() else None,
+            layout_y=row["node_layout_y"] if "node_layout_y" in row.keys() else None,
         )
         return TheoryBranch(edge=edge, node=node)
 

@@ -55,6 +55,19 @@ class TheoryService:
     ) -> TheoryBook:
         return self.store.update_book_source(book_id, source_type, initial_moves)
 
+    def update_book_map_depths(
+        self,
+        book_id: str,
+        *,
+        backward_depth: int,
+        forward_depth: int,
+    ) -> TheoryBook:
+        return self.store.update_book_map_depths(
+            book_id,
+            backward_depth=backward_depth,
+            forward_depth=forward_depth,
+        )
+
     def list_books(self) -> list[TheoryBook]:
         return self.store.list_books()
 
@@ -106,6 +119,18 @@ class TheoryService:
             evaluation=evaluation,
             captured_pieces=captured_pieces,
         )
+
+    def update_node_layout(
+        self,
+        node_id: str,
+        *,
+        layout_x: Optional[float],
+        layout_y: Optional[float],
+    ) -> TheoryNode:
+        return self.store.update_node_layout(node_id, layout_x=layout_x, layout_y=layout_y)
+
+    def update_node_layouts(self, positions: dict[str, tuple[float, float]]) -> None:
+        self.store.update_node_layouts(positions)
 
     def add_child(
         self,

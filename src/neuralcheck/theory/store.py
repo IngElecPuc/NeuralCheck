@@ -41,6 +41,14 @@ class TheoryGraphStore(Protocol):
         initial_moves: Tuple[str, ...] = (),
     ) -> TheoryBook: ...
 
+    def update_book_map_depths(
+        self,
+        book_id: str,
+        *,
+        backward_depth: int,
+        forward_depth: int,
+    ) -> TheoryBook: ...
+
     def list_books(self) -> list[TheoryBook]: ...
 
     def get_book(self, book_id: str) -> Optional[TheoryBook]: ...
@@ -69,6 +77,19 @@ class TheoryGraphStore(Protocol):
         evaluation: Optional[str] = None,
         captured_pieces: Optional[str] = None,
     ) -> TheoryNode: ...
+
+    def update_node_layout(
+        self,
+        node_id: str,
+        *,
+        layout_x: Optional[float],
+        layout_y: Optional[float],
+    ) -> TheoryNode: ...
+
+    def update_node_layouts(
+        self,
+        positions: dict[str, tuple[float, float]],
+    ) -> None: ...
 
     def add_child(
         self,

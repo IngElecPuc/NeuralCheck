@@ -9,7 +9,7 @@ changing the storage contract.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import tkinter as tk
 from typing import Callable, Dict, Iterable, Mapping, Optional, Tuple
@@ -99,7 +99,12 @@ class TheoryMapLayoutEngine:
                 children_by_parent[edge.parent_node_id].append(edge.child_node_id)
                 parent_by_child[edge.child_node_id] = edge.parent_node_id
 
-        positions: Dict[str, Tuple[float, float]] = {selected_id: center}
+        positions: Dict[str, Tuple[float, float]] = {}
+        for node in view.nodes:
+            if node.layout_x is not None and node.layout_y is not None:
+                positions[node.id] = (float(node.layout_x), float(node.layout_y))
+        had_persisted_positions = bool(positions)
+        positions.setdefault(selected_id, center)
         weights = self._descendant_weights(selected_id, children_by_parent)
         self._layout_forward_tree(
             node_id=selected_id,
@@ -122,8 +127,9 @@ class TheoryMapLayoutEngine:
             weights=weights,
             positions=positions,
         )
-        self._separate_overlapping_nodes(positions, locked_node_id=selected_id, center=center)
-        self._recenter(positions, selected_id, center)
+        if not had_persisted_positions:
+            self._separate_overlapping_nodes(positions, locked_node_id=selected_id, center=center)
+            self._recenter(positions, selected_id, center)
 
         return GraphLayout(
             nodes={
@@ -198,9 +204,12 @@ class TheoryMapLayoutEngine:
             # Each generation gets a little more distance from its parent so
             # long opening lines do not become a compressed vertical chain.
             radius = self.forward_step * (1.0 + depth * 0.18)
-            positions[child_id] = (
-                parent_position[0] + math.cos(angle) * radius,
-                parent_position[1] + math.sin(angle) * radius,
+            positions.setdefault(
+                child_id,
+                (
+                    parent_position[0] + math.cos(angle) * radius,
+                    parent_position[1] + math.sin(angle) * radius,
+                ),
             )
             self._layout_forward_tree(
                 node_id=child_id,
@@ -230,7 +239,7 @@ class TheoryMapLayoutEngine:
             parent_id = parent_by_child[current_id]
             x = x + math.cos(angle) * distance
             y = y + math.sin(angle) * distance
-            positions[parent_id] = (x, y)
+            positions.setdefault(parent_id, (x, y))
             current_id = parent_id
             distance *= 1.08
 
@@ -268,7 +277,7 @@ class TheoryMapLayoutEngine:
             radius = self.forward_step * 1.05
             for child_id, offset in zip(missing_children, offsets):
                 angle = base_angle + offset
-                positions[child_id] = (px + math.cos(angle) * radius, py + math.sin(angle) * radius)
+                positions.setdefault(child_id, (px + math.cos(angle) * radius, py + math.sin(angle) * radius))
                 self._layout_forward_tree(
                     node_id=child_id,
                     children_by_parent=children_by_parent,
@@ -388,6 +397,13 @@ class TheoryMapCanvas(tk.Frame):
         self._last_drag: Optional[Tuple[int, int]] = None
         self._right_drag: Optional[Tuple[int, int]] = None
         self._middle_drag: Optional[Tuple[int, int]] = None
+        self._node_drag_id: Optional[str] = None
+        self._node_drag_previous: Optional[Tuple[int, int]] = None
+        self._subtree_drag_ids: set[str] = set()
+        self._subtree_rotate_ids: set[str] = set()
+        self._subtree_rotate_center: Optional[Tuple[float, float]] = None
+        self._subtree_rotate_previous_angle: Optional[float] = None
+        self._depths_loaded_for_book: Optional[str] = None
 
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -400,7 +416,7 @@ class TheoryMapCanvas(tk.Frame):
         self.backward_spinbox = tk.Spinbox(
             controls,
             from_=0,
-            to=6,
+            to=50,
             width=3,
             textvariable=self.backward_depth_var,
             command=self._on_depth_change,
@@ -412,7 +428,7 @@ class TheoryMapCanvas(tk.Frame):
         self.forward_spinbox = tk.Spinbox(
             controls,
             from_=1,
-            to=10,
+            to=50,
             width=3,
             textvariable=self.forward_depth_var,
             command=self._on_depth_change,
@@ -424,29 +440,29 @@ class TheoryMapCanvas(tk.Frame):
         tk.Button(controls, text="Zoom -", command=self.zoom_out).grid(row=0, column=6, padx=2)
         tk.Button(controls, text="Ajustar a vista", command=self.fit_to_view).grid(row=0, column=7, padx=2)
         tk.Button(controls, text="Centrar", command=self.center_selected).grid(row=0, column=8, padx=2)
-        tk.Button(controls, text="↺", command=lambda: self.rotate_by(-math.radians(15))).grid(row=0, column=9, padx=2)
-        tk.Button(controls, text="↻", command=lambda: self.rotate_by(math.radians(15))).grid(row=0, column=10, padx=2)
-        tk.Button(controls, text="Recalcular", command=lambda: self.refresh(force_layout=True)).grid(row=0, column=11, padx=2)
+        tk.Button(controls, text="↺", command=lambda: self.rotate_by(-math.radians(15))).grid(row=1, column=0, padx=2, pady=(2, 0))
+        tk.Button(controls, text="↻", command=lambda: self.rotate_by(math.radians(15))).grid(row=1, column=1, padx=2, pady=(2, 0))
+        tk.Button(controls, text="Recalcular", command=lambda: self.refresh(force_layout=True)).grid(row=1, column=2, padx=2, pady=(2, 0))
         self.auto_layout_check = tk.Checkbutton(
             controls,
             text="Autoordenar",
             variable=self.auto_layout_var,
             command=self._on_auto_layout_change,
         )
-        self.auto_layout_check.grid(row=0, column=12, padx=2)
+        self.auto_layout_check.grid(row=1, column=3, padx=2, pady=(2, 0))
         self.auto_center_check = tk.Checkbutton(
             controls,
             text="Autocentrar",
             variable=self.auto_center_var,
             command=lambda: self.refresh(force_layout=self.auto_layout_var.get()),
         )
-        self.auto_center_check.grid(row=0, column=13, padx=2)
-        tk.Button(controls, text="Restablecer", command=self.reset_view).grid(row=0, column=14, padx=2)
+        self.auto_center_check.grid(row=1, column=4, padx=2, pady=(2, 0))
+        tk.Button(controls, text="Restablecer", command=self.reset_view).grid(row=1, column=5, padx=2, pady=(2, 0))
         if self._allow_fullscreen:
-            tk.Button(controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=0, column=15, padx=2)
+            tk.Button(controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=1, column=6, padx=2, pady=(2, 0))
 
         self.mode_label_var = tk.StringVar(value="Modo: vista fija")
-        tk.Label(controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=0, column=16, padx=(8, 2), sticky="w")
+        tk.Label(controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=1, column=7, columnspan=3, padx=(8, 2), sticky="w")
 
         self.deep_graph_warning_var = tk.StringVar(value="")
         self.deep_graph_warning_label = tk.Label(
@@ -496,12 +512,13 @@ class TheoryMapCanvas(tk.Frame):
         self._sync_navigation_mode_defaults(force=True)
 
     def refresh(self, *, force_layout: bool = False) -> None:
+        self._load_depths_from_selected_book_once()
         try:
-            self.forward_depth = max(1, int(self.forward_depth_var.get()))
+            self.forward_depth = max(1, min(50, int(self.forward_depth_var.get())))
         except (tk.TclError, ValueError):
             self.forward_depth = 4
         try:
-            self.backward_depth = max(0, int(self.backward_depth_var.get()))
+            self.backward_depth = max(0, min(50, int(self.backward_depth_var.get())))
         except (tk.TclError, ValueError):
             self.backward_depth = 2
         view = self._resolve_view(force_layout=force_layout)
@@ -510,6 +527,15 @@ class TheoryMapCanvas(tk.Frame):
 
     def force_recalculate(self) -> None:
         self.refresh(force_layout=True)
+
+    def _load_depths_from_selected_book_once(self) -> None:
+        book_id = self.controller.selected_book_id
+        if book_id is None or book_id == self._depths_loaded_for_book:
+            return
+        backward_depth, forward_depth = self.controller.selected_book_map_depths()
+        self.backward_depth_var.set(backward_depth)
+        self.forward_depth_var.set(forward_depth)
+        self._depths_loaded_for_book = book_id
 
     def on_navigation_mode_changed(self) -> None:
         self._sync_navigation_mode_defaults()
@@ -568,13 +594,37 @@ class TheoryMapCanvas(tk.Frame):
         return self._navigation_mode() == NAVIGATION_FIXED and not self.auto_layout_var.get() and not force_layout
 
     def _with_current_selection(self, view: TheoryMapView) -> TheoryMapView:
-        from dataclasses import replace
-
         selected_id = self.controller.selected_node_id
+        refreshed_nodes = []
+        visible_ids = set()
+        for node in view.nodes:
+            current_node = self.controller.service.get_node(node.id)
+            if current_node is None:
+                continue
+            label = current_node.name.strip() if current_node.name and current_node.name.strip() else node.label
+            refreshed_nodes.append(
+                replace(
+                    node,
+                    label=label,
+                    fen=current_node.fen,
+                    side_to_move=current_node.side_to_move,
+                    evaluation=current_node.evaluation,
+                    is_selected=(node.id == selected_id),
+                    layout_x=current_node.layout_x,
+                    layout_y=current_node.layout_y,
+                )
+            )
+            visible_ids.add(node.id)
+        refreshed_edges = tuple(
+            edge
+            for edge in view.edges
+            if edge.parent_node_id in visible_ids and edge.child_node_id in visible_ids
+        )
         return replace(
             view,
             selected_node_id=selected_id,
-            nodes=tuple(replace(node, is_selected=(node.id == selected_id)) for node in view.nodes),
+            nodes=tuple(refreshed_nodes),
+            edges=refreshed_edges,
         )
 
     def _update_deep_graph_warning(self) -> None:
@@ -677,6 +727,17 @@ class TheoryMapCanvas(tk.Frame):
         window.protocol("WM_DELETE_WINDOW", window.destroy)
 
     def _on_depth_change(self) -> None:
+        try:
+            backward_depth = max(0, min(50, int(self.backward_depth_var.get())))
+            forward_depth = max(1, min(50, int(self.forward_depth_var.get())))
+        except (tk.TclError, ValueError):
+            backward_depth, forward_depth = self.backward_depth, self.forward_depth
+        self.backward_depth_var.set(backward_depth)
+        self.forward_depth_var.set(forward_depth)
+        self.controller.update_selected_book_map_depths(
+            backward_depth=backward_depth,
+            forward_depth=forward_depth,
+        )
         self.refresh(force_layout=True)
 
     def _render(self, view: TheoryMapView, *, reuse_layout: bool = False) -> None:
@@ -712,6 +773,7 @@ class TheoryMapCanvas(tk.Frame):
             )
             layout = engine.layout(view, selected_node_id=view.selected_node_id, center=center)
             self._cached_layout = layout
+            self._persist_layout_if_fixed(view, layout)
         self.node_positions = {node_id: (node.x, node.y) for node_id, node in layout.nodes.items()}
         self.node_roles = self._classify_node_roles(view)
 
@@ -735,6 +797,18 @@ class TheoryMapCanvas(tk.Frame):
         self._update_scrollregion(width, height, node_radius)
         if self.auto_layout_var.get() and self.auto_center_var.get():
             self.center_selected()
+
+    def _persist_layout_if_fixed(self, view: TheoryMapView, layout: GraphLayout) -> None:
+        if self._navigation_mode() != NAVIGATION_FIXED:
+            return
+        stored = {node.id: (node.layout_x, node.layout_y) for node in view.nodes}
+        updates: dict[str, tuple[float, float]] = {}
+        for node_id, layout_node in layout.nodes.items():
+            previous = stored.get(node_id, (None, None))
+            if previous[0] is None or previous[1] is None:
+                updates[node_id] = (layout_node.x, layout_node.y)
+        if updates:
+            self.controller.update_node_layouts(updates)
 
     @staticmethod
     def _layout_matches_view(layout: GraphLayout, view: TheoryMapView) -> bool:
@@ -801,13 +875,6 @@ class TheoryMapCanvas(tk.Frame):
                 if sibling_id == selected_id:
                     continue
                 roles[sibling_id] = "sibling"
-
-                def mark_sibling_descendants(node_id: str) -> None:
-                    for child_id in children_by_parent.get(node_id, []):
-                        roles.setdefault(child_id, "sibling")
-                        mark_sibling_descendants(child_id)
-
-                mark_sibling_descendants(sibling_id)
 
         roles[selected_id] = "selected"
         return roles
@@ -891,6 +958,9 @@ class TheoryMapCanvas(tk.Frame):
             tags=tags,
         )
         self.canvas.tag_bind(tag, "<Button-1>", lambda event, node_id=node.id: self._on_node_click(event, node_id))
+        self.canvas.tag_bind(tag, "<Double-ButtonPress-1>", lambda event, node_id=node.id: self._start_node_drag(event, node_id))
+        self.canvas.tag_bind(tag, "<Control-ButtonPress-1>", lambda event, node_id=node.id: self._start_subtree_drag(event, node_id))
+        self.canvas.tag_bind(tag, "<Control-ButtonPress-3>", lambda event, node_id=node.id: self._start_subtree_rotate(event, node_id))
         self.canvas.tag_bind(tag, "<Enter>", lambda event, node=node: self._show_tooltip(event, node))
         self.canvas.tag_bind(tag, "<Leave>", lambda event: self._hide_tooltip())
 
@@ -934,19 +1004,21 @@ class TheoryMapCanvas(tk.Frame):
     def _set_zoom(self, value: float, refresh: bool = True) -> None:
         self.zoom = max(0.15, min(4.5, value))
         if refresh:
-            self.refresh(force_layout=True)
+            self.refresh(force_layout=False)
+            if self._navigation_mode() == NAVIGATION_CONTEXTUAL or self.auto_center_var.get():
+                self.center_selected()
 
     def _bind_mouse_controls(self) -> None:
         self.canvas.bind("<ButtonPress>", lambda event: self.activate_keyboard_focus(), add="+")
         # Left button drag: pan vertically/horizontally.
         self.canvas.bind("<ButtonPress-1>", self._on_left_button_press, add="+")
         self.canvas.bind("<B1-Motion>", self._on_left_drag, add="+")
-        self.canvas.bind("<ButtonRelease-1>", lambda event: self._clear_left_drag(), add="+")
+        self.canvas.bind("<ButtonRelease-1>", lambda event: self._finish_left_interaction(), add="+")
 
         # Right button drag: rotate graph around the current view center.
         self.canvas.bind("<ButtonPress-3>", self._on_right_button_press)
         self.canvas.bind("<B3-Motion>", self._on_right_drag)
-        self.canvas.bind("<ButtonRelease-3>", lambda event: self._clear_right_drag())
+        self.canvas.bind("<ButtonRelease-3>", lambda event: self._finish_right_interaction())
 
         # Middle button drag: zoom based on vertical movement.
         self.canvas.bind("<ButtonPress-2>", self._on_middle_button_press)
@@ -1007,11 +1079,27 @@ class TheoryMapCanvas(tk.Frame):
         return "break"
 
     def _on_left_button_press(self, event: tk.Event) -> None:
+        if self._node_drag_id is not None or self._subtree_drag_ids:
+            return
         self._last_drag = (event.x, event.y)
         self.canvas.scan_mark(event.x, event.y)
 
     def _on_left_drag(self, event: tk.Event) -> None:
+        if self._node_drag_id is not None:
+            self._drag_node_to(event)
+            return
+        if self._subtree_drag_ids:
+            self._drag_subtree_to(event)
+            return
         self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _finish_left_interaction(self) -> None:
+        if self._node_drag_id is not None or self._subtree_drag_ids:
+            self._persist_current_layout_positions()
+        self._node_drag_id = None
+        self._node_drag_previous = None
+        self._subtree_drag_ids = set()
+        self._clear_left_drag()
 
     def _clear_left_drag(self) -> None:
         self._last_drag = None
@@ -1020,6 +1108,9 @@ class TheoryMapCanvas(tk.Frame):
         self._right_drag = (event.x, event.y)
 
     def _on_right_drag(self, event: tk.Event) -> None:
+        if self._subtree_rotate_ids:
+            self._rotate_subtree_to(event)
+            return
         if self._right_drag is None:
             self._right_drag = (event.x, event.y)
             return
@@ -1032,8 +1123,129 @@ class TheoryMapCanvas(tk.Frame):
             self.refresh(force_layout=True)
         self._right_drag = (event.x, event.y)
 
+    def _finish_right_interaction(self) -> None:
+        if self._subtree_rotate_ids:
+            self._persist_current_layout_positions()
+        self._subtree_rotate_ids = set()
+        self._subtree_rotate_center = None
+        self._subtree_rotate_previous_angle = None
+        self._clear_right_drag()
+
     def _clear_right_drag(self) -> None:
         self._right_drag = None
+
+
+    def _start_node_drag(self, event: tk.Event, node_id: str) -> str:
+        self.activate_keyboard_focus()
+        self._node_drag_id = node_id
+        self._node_drag_previous = (event.x, event.y)
+        return "break"
+
+    def _start_subtree_drag(self, event: tk.Event, node_id: str) -> str:
+        self.activate_keyboard_focus()
+        visible_ids = set(self.node_positions)
+        self._subtree_drag_ids = self.controller.get_visible_subtree_ids(node_id, visible_ids)
+        self._node_drag_previous = (event.x, event.y)
+        return "break"
+
+    def _start_subtree_rotate(self, event: tk.Event, node_id: str) -> str:
+        self.activate_keyboard_focus()
+        visible_ids = set(self.node_positions)
+        self._subtree_rotate_ids = self.controller.get_visible_descendant_ids(node_id, visible_ids)
+        if not self._subtree_rotate_ids:
+            self._subtree_rotate_ids = set()
+            return "break"
+        self._subtree_rotate_center = self.node_positions.get(node_id)
+        if self._subtree_rotate_center is None:
+            self._subtree_rotate_ids = set()
+            return "break"
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        cx, cy = self._subtree_rotate_center
+        self._subtree_rotate_previous_angle = math.atan2(canvas_y - cy, canvas_x - cx)
+        return "break"
+
+    def _drag_node_to(self, event: tk.Event) -> None:
+        if self._node_drag_id is None or self._node_drag_previous is None:
+            return
+        previous_x, previous_y = self._node_drag_previous
+        dx = self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)
+        dy = self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)
+        self._move_visible_nodes({self._node_drag_id}, dx, dy)
+        self._node_drag_previous = (event.x, event.y)
+
+    def _drag_subtree_to(self, event: tk.Event) -> None:
+        if not self._subtree_drag_ids or self._node_drag_previous is None:
+            return
+        previous_x, previous_y = self._node_drag_previous
+        dx = self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)
+        dy = self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)
+        self._move_visible_nodes(self._subtree_drag_ids, dx, dy)
+        self._node_drag_previous = (event.x, event.y)
+
+    def _rotate_subtree_to(self, event: tk.Event) -> None:
+        if not self._subtree_rotate_ids or self._subtree_rotate_center is None:
+            return
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        cx, cy = self._subtree_rotate_center
+        angle = math.atan2(canvas_y - cy, canvas_x - cx)
+        if self._subtree_rotate_previous_angle is None:
+            self._subtree_rotate_previous_angle = angle
+            return
+        delta = angle - self._subtree_rotate_previous_angle
+        if abs(delta) < 0.001:
+            return
+        cos_delta = math.cos(delta)
+        sin_delta = math.sin(delta)
+        for node_id in self._subtree_rotate_ids:
+            x, y = self.node_positions.get(node_id, (cx, cy))
+            rx = x - cx
+            ry = y - cy
+            self.node_positions[node_id] = (
+                cx + rx * cos_delta - ry * sin_delta,
+                cy + rx * sin_delta + ry * cos_delta,
+            )
+        self._sync_cached_layout_from_node_positions()
+        self._redraw_current_cached_view()
+        self._subtree_rotate_previous_angle = angle
+
+    def _move_visible_nodes(self, node_ids: set[str], dx: float, dy: float) -> None:
+        if not node_ids:
+            return
+        for node_id in node_ids:
+            if node_id not in self.node_positions:
+                continue
+            x, y = self.node_positions[node_id]
+            self.node_positions[node_id] = (x + dx, y + dy)
+        self._sync_cached_layout_from_node_positions()
+        self._redraw_current_cached_view()
+
+    def _sync_cached_layout_from_node_positions(self) -> None:
+        if self._cached_layout is None:
+            return
+        self._cached_layout = GraphLayout(
+            nodes={
+                node_id: GraphLayoutNode(
+                    id=node_id,
+                    x=position[0],
+                    y=position[1],
+                    depth=self._cached_layout.nodes[node_id].depth if node_id in self._cached_layout.nodes else 0,
+                )
+                for node_id, position in self.node_positions.items()
+            },
+            center_node_id=self._cached_layout.center_node_id,
+        )
+
+    def _redraw_current_cached_view(self) -> None:
+        if self._cached_view is None:
+            return
+        self._render(self._with_current_selection(self._cached_view), reuse_layout=True)
+
+    def _persist_current_layout_positions(self) -> None:
+        if self._navigation_mode() != NAVIGATION_FIXED:
+            return
+        self.controller.update_node_layouts(dict(self.node_positions))
 
     def _on_middle_button_press(self, event: tk.Event) -> None:
         self._middle_drag = (event.x, event.y)

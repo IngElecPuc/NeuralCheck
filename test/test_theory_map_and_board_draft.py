@@ -266,3 +266,56 @@ def test_fixed_navigation_map_view_can_keep_selected_node_inside_existing_projec
         assert theory_controller.selected_node_id in frozen_ids
     finally:
         theory_controller.close()
+
+
+def test_theory_book_map_depths_are_persisted(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        book = theory_controller.create_book("Profundidades")
+        theory_controller.select_book(book.id)
+        updated = theory_controller.update_selected_book_map_depths(
+            backward_depth=12,
+            forward_depth=30,
+        )
+        assert updated is not None
+        assert updated.map_backward_depth == 12
+        assert updated.map_forward_depth == 30
+        assert theory_controller.selected_book_map_depths() == (12, 30)
+    finally:
+        theory_controller.close()
+
+
+def test_theory_node_layout_positions_are_persisted(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        book = theory_controller.create_book("Layout")
+        root = theory_controller.create_root_from_current_position(book.id, name="Base")
+        child = theory_controller.add_child_by_move(root.id, "e4", name="Peón rey")
+
+        theory_controller.update_node_layout(root.id, 120.5, 240.25)
+        theory_controller.update_node_layouts({child.node.id: (300.0, 350.0)})
+
+        root_again = theory_controller.service.get_node(root.id)
+        child_again = theory_controller.service.get_node(child.node.id)
+        assert root_again is not None
+        assert child_again is not None
+        assert root_again.layout_x == 120.5
+        assert root_again.layout_y == 240.25
+        assert child_again.layout_x == 300.0
+        assert child_again.layout_y == 350.0
+
+        theory_controller.select_node(root.id)
+        view = theory_controller.get_map_view(forward_depth=1, backward_depth=0)
+        layouts = {node.id: (node.layout_x, node.layout_y) for node in view.nodes}
+        assert layouts[root.id] == (120.5, 240.25)
+        assert layouts[child.node.id] == (300.0, 350.0)
+    finally:
+        theory_controller.close()

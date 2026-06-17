@@ -111,6 +111,21 @@ class TheoryController:
         self._selected_book_id = book.id
         return book
 
+    def update_selected_book_map_depths(self, *, backward_depth: int, forward_depth: int) -> Optional[TheoryBook]:
+        if self._selected_book_id is None:
+            return None
+        return self.service.update_book_map_depths(
+            self._selected_book_id,
+            backward_depth=backward_depth,
+            forward_depth=forward_depth,
+        )
+
+    def selected_book_map_depths(self) -> tuple[int, int]:
+        book = self.get_selected_book()
+        if book is None:
+            return (2, 4)
+        return (book.map_backward_depth, book.map_forward_depth)
+
     def delete_book(self, book_id: str) -> bool:
         deleted = self.service.delete_book(book_id)
         if deleted and self._selected_book_id == book_id:
@@ -271,6 +286,49 @@ class TheoryController:
         self._move_draft = None
         return node
 
+    def update_node_layout(self, node_id: str, layout_x: float, layout_y: float) -> TheoryNode:
+        return self.service.update_node_layout(node_id, layout_x=layout_x, layout_y=layout_y)
+
+    def update_node_layouts(self, positions: dict[str, tuple[float, float]]) -> None:
+        self.service.update_node_layouts(positions)
+
+    def get_visible_descendant_ids(self, node_id: str, visible_node_ids: set[str]) -> set[str]:
+        result: set[str] = set()
+
+        def visit(current_id: str) -> None:
+            for branch in self.service.get_children(current_id):
+                child_id = branch.node.id
+                if child_id not in visible_node_ids or child_id in result:
+                    continue
+                result.add(child_id)
+                visit(child_id)
+
+        visit(node_id)
+        return result
+
+    def get_visible_subtree_ids(self, node_id: str, visible_node_ids: set[str]) -> set[str]:
+        result = {node_id} if node_id in visible_node_ids else set()
+        result.update(self.get_visible_descendant_ids(node_id, visible_node_ids))
+        return result
+
+    def get_node_layouts_for_book(self, book_id: Optional[str] = None) -> dict[str, tuple[float, float]]:
+        target_book_id = book_id or self._selected_book_id
+        if target_book_id is None:
+            return {}
+        root = self.service.get_root(target_book_id)
+        if root is None:
+            return {}
+        layouts: dict[str, tuple[float, float]] = {}
+
+        def visit(node: TheoryNode) -> None:
+            if node.layout_x is not None and node.layout_y is not None:
+                layouts[node.id] = (float(node.layout_x), float(node.layout_y))
+            for branch in self.service.get_children(node.id):
+                visit(branch.node)
+
+        visit(root)
+        return layouts
+
     def get_local_view(self) -> TheoryLocalView:
         book = self.get_selected_book()
         current = self.get_selected_node()
@@ -416,6 +474,8 @@ class TheoryController:
             evaluation=node.evaluation,
             depth=depth,
             is_selected=node.id == self._selected_node_id,
+            layout_x=node.layout_x,
+            layout_y=node.layout_y,
         )
 
     def _default_node_label(self, node: TheoryNode) -> str:
