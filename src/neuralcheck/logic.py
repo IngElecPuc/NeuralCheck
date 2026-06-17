@@ -6,7 +6,7 @@ except ModuleNotFoundError:
 import yaml
 from pathlib import Path
 from neuralcheck.bitboard import ChessBitboard
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 BOARD_SIZE = 8
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +81,377 @@ class ChessBoard:
 
         return array.reshape((-1, 2))
     
+    def _position_in_bounds(self, position: str) -> bool:
+        if not isinstance(position, str) or len(position) != 2:
+            return False
+        col, row = position[0], position[1]
+        return col in self._cols2int and row in {str(i) for i in range(1, BOARD_SIZE + 1)}
+
+    def _color_from_piece(self, piece: str) -> Optional[str]:
+        if piece.startswith('white '):
+            return 'white'
+        if piece.startswith('black '):
+            return 'black'
+        return None
+
+    def _color_from_value(self, value: int) -> Optional[str]:
+        if value > 0:
+            return 'white'
+        if value < 0:
+            return 'black'
+        return None
+
+    def _piece_from_value(self, value: int) -> str:
+        color = self._color_from_value(value)
+        if color is None:
+            return 'Empty square'
+        return f'{color} {self.num2name[abs(int(value))]}'
+
+    def _piece_value(self, piece: str) -> int:
+        if 'Empty' in piece:
+            return 0
+        color, name = piece.split(' ', 1)
+        return self.name2num[name] * (1 if color == 'white' else -1)
+
+    def _active_color(self) -> str:
+        return 'white' if self.white_turn else 'black'
+
+    def _opponent_color(self, color: str) -> str:
+        return 'black' if color == 'white' else 'white'
+
+    def _color_sign(self, color: str) -> int:
+        return 1 if color == 'white' else -1
+
+    def _target_has_own_piece(self, board: np.array, x: int, y: int, color: str) -> bool:
+        return self._color_sign(color) * int(board[x, y]) > 0
+
+    def _target_has_enemy_piece(self, board: np.array, x: int, y: int, color: str) -> bool:
+        return self._color_sign(color) * int(board[x, y]) < 0
+
+    def _find_king_position(self, board: np.array, color: str) -> Optional[str]:
+        king_value = 6 * self._color_sign(color)
+        rows, cols = np.where(board == king_value)
+        if rows.size != 1 or cols.size != 1:
+            return None
+        return self.array2logic(int(rows[0]), int(cols[0]))
+
+    def _sync_bitboard(self) -> None:
+        self.bitboard = ChessBitboard(self.board)
+
+    def _refresh_possible_moves(self) -> None:
+        self.pinned_pieces = []
+        self.possible_moves = self.calculate_possible_moves()
+        self._sync_bitboard()
+
+    def refresh_state(self) -> None:
+        """Recalculate legal moves and bitboards after direct board editing."""
+        self._refresh_possible_moves()
+
+    def _dedupe_preserve_order(self, moves: List[str]) -> List[str]:
+        seen = set()
+        unique_moves = []
+        for move in moves:
+            if move not in seen:
+                seen.add(move)
+                unique_moves.append(move)
+        return unique_moves
+
+    def _raycast_targets(
+        self,
+        board: np.array,
+        x: int,
+        y: int,
+        vectors: np.array,
+        color: str,
+        for_attack: bool = False,
+    ) -> List[str]:
+        targets: List[str] = []
+        for dx, dy in self._normalize_move_vectors(vectors):
+            for distance in range(1, BOARD_SIZE):
+                target_x, target_y = x + distance * dx, y + distance * dy
+                if not (0 <= target_x < BOARD_SIZE and 0 <= target_y < BOARD_SIZE):
+                    break
+
+                value = int(board[target_x, target_y])
+                if value == 0:
+                    targets.append(self.array2logic(target_x, target_y))
+                    continue
+
+                if for_attack:
+                    targets.append(self.array2logic(target_x, target_y))
+                    break
+
+                if self._target_has_enemy_piece(board, target_x, target_y, color):
+                    targets.append(self.array2logic(target_x, target_y))
+                break
+        return targets
+
+    def _pawn_targets(
+        self,
+        board: np.array,
+        x: int,
+        y: int,
+        color: str,
+        for_attack: bool = False,
+    ) -> List[str]:
+        direction = -1 if color == 'white' else 1
+        start_rank_x = 6 if color == 'white' else 1
+        en_passant_rank_x = 3 if color == 'white' else 4
+        targets: List[str] = []
+
+        for diagonal_y in (y - 1, y + 1):
+            target_x = x + direction
+            if 0 <= target_x < BOARD_SIZE and 0 <= diagonal_y < BOARD_SIZE:
+                if for_attack:
+                    targets.append(self.array2logic(target_x, diagonal_y))
+                elif self._target_has_enemy_piece(board, target_x, diagonal_y, color):
+                    targets.append(self.array2logic(target_x, diagonal_y))
+
+        if for_attack:
+            return targets
+
+        one_step_x = x + direction
+        if 0 <= one_step_x < BOARD_SIZE and board[one_step_x, y] == 0:
+            targets.append(self.array2logic(one_step_x, y))
+            two_step_x = x + 2 * direction
+            if x == start_rank_x and 0 <= two_step_x < BOARD_SIZE and board[two_step_x, y] == 0:
+                targets.append(self.array2logic(two_step_x, y))
+
+        if x == en_passant_rank_x:
+            targets.extend(self._en_passant_targets(board, x, y, color))
+
+        return targets
+
+    def _en_passant_targets(self, board: np.array, x: int, y: int, color: str) -> List[str]:
+        last_piece, last_initial, last_end = self.last_turn
+        if last_piece is None or last_initial is None or last_end is None:
+            return []
+        if 'pawn' not in last_piece:
+            return []
+        if self._color_from_piece(last_piece) == color:
+            return []
+
+        last_initial_x, last_initial_y = self.logic2array(last_initial)
+        last_end_x, last_end_y = self.logic2array(last_end)
+        if abs(last_initial_x - last_end_x) != 2:
+            return []
+        if last_end_x != x or abs(last_end_y - y) != 1:
+            return []
+        if int(board[last_end_x, last_end_y]) != self._piece_value(last_piece):
+            return []
+
+        direction = -1 if color == 'white' else 1
+        target_x = x + direction
+        if 0 <= target_x < BOARD_SIZE:
+            return [self.array2logic(target_x, last_end_y)]
+        return []
+
+    def _king_targets(
+        self,
+        board: np.array,
+        x: int,
+        y: int,
+        color: str,
+        for_attack: bool = False,
+    ) -> List[str]:
+        targets: List[str] = []
+        for dx, dy in self._normalize_move_vectors(np.array([[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]])):
+            target_x, target_y = x + dx, y + dy
+            if not (0 <= target_x < BOARD_SIZE and 0 <= target_y < BOARD_SIZE):
+                continue
+            if for_attack or not self._target_has_own_piece(board, target_x, target_y, color):
+                targets.append(self.array2logic(target_x, target_y))
+
+        if not for_attack:
+            targets.extend(self._castling_targets(board, color))
+
+        return targets
+
+    def _castling_targets(self, board: np.array, color: str) -> List[str]:
+        targets: List[str] = []
+        rank = '1' if color == 'white' else '8'
+        king_start = f'e{rank}'
+        king_x, king_y = self.logic2array(king_start)
+        if self._piece_from_value(int(board[king_x, king_y])) != f'{color} king':
+            return targets
+
+        king_flag = f'{color} king moved'
+        if self.castle_flags.get(king_flag, False):
+            return targets
+        if self._is_square_attacked_on_board(board, king_start, self._opponent_color(color)):
+            return targets
+
+        options = (
+            {
+                'rook_start': f'h{rank}',
+                'rook_flag': f'h{rank} rook moved',
+                'empty_squares': [f'f{rank}', f'g{rank}'],
+                'safe_squares': [f'f{rank}', f'g{rank}'],
+                'target': f'g{rank}',
+            },
+            {
+                'rook_start': f'a{rank}',
+                'rook_flag': f'a{rank} rook moved',
+                'empty_squares': [f'b{rank}', f'c{rank}', f'd{rank}'],
+                'safe_squares': [f'd{rank}', f'c{rank}'],
+                'target': f'c{rank}',
+            },
+        )
+
+        for option in options:
+            rook_x, rook_y = self.logic2array(option['rook_start'])
+            if self._piece_from_value(int(board[rook_x, rook_y])) != f'{color} rook':
+                continue
+            if self.castle_flags.get(option['rook_flag'], False):
+                continue
+            path_is_empty = True
+            for square in option['empty_squares']:
+                square_x, square_y = self.logic2array(square)
+                if int(board[square_x, square_y]) != 0:
+                    path_is_empty = False
+                    break
+            if not path_is_empty:
+                continue
+            if any(self._is_square_attacked_on_board(board, square, self._opponent_color(color)) for square in option['safe_squares']):
+                continue
+            targets.append(option['target'])
+
+        return targets
+
+    def _pseudo_targets_for_piece(
+        self,
+        board: np.array,
+        piece: str,
+        position: str,
+        for_attack: bool = False,
+    ) -> List[str]:
+        if not self._position_in_bounds(position):
+            return []
+
+        color = self._color_from_piece(piece)
+        if color is None:
+            return []
+
+        x, y = self.logic2array(position)
+        if not (0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE):
+            return []
+
+        if 'pawn' in piece:
+            return self._dedupe_preserve_order(self._pawn_targets(board, x, y, color, for_attack=for_attack))
+        if 'knight' in piece:
+            vectors = np.array([[2, 1], [1, 2], [-1, 2], [-2, 1], [-2, -1], [-1, -2], [1, -2], [2, -1]])
+            targets = []
+            for dx, dy in self._normalize_move_vectors(vectors):
+                target_x, target_y = x + dx, y + dy
+                if not (0 <= target_x < BOARD_SIZE and 0 <= target_y < BOARD_SIZE):
+                    continue
+                if for_attack or not self._target_has_own_piece(board, target_x, target_y, color):
+                    targets.append(self.array2logic(target_x, target_y))
+            return self._dedupe_preserve_order(targets)
+        if 'bishop' in piece:
+            return self._dedupe_preserve_order(self._raycast_targets(board, x, y, self.diagonal_vectors, color, for_attack=for_attack))
+        if 'rook' in piece:
+            return self._dedupe_preserve_order(self._raycast_targets(board, x, y, self.line_vectors, color, for_attack=for_attack))
+        if 'queen' in piece:
+            all_vectors = np.concatenate((self.line_vectors, self.diagonal_vectors))
+            return self._dedupe_preserve_order(self._raycast_targets(board, x, y, all_vectors, color, for_attack=for_attack))
+        if 'king' in piece:
+            return self._dedupe_preserve_order(self._king_targets(board, x, y, color, for_attack=for_attack))
+        return []
+
+    def _is_square_attacked_on_board(self, board: np.array, square: str, by_color: str) -> bool:
+        for x in range(BOARD_SIZE):
+            for y in range(BOARD_SIZE):
+                value = int(board[x, y])
+                if value == 0 or self._color_from_value(value) != by_color:
+                    continue
+                piece = self._piece_from_value(value)
+                position = self.array2logic(x, y)
+                if square in self._pseudo_targets_for_piece(board, piece, position, for_attack=True):
+                    return True
+        return False
+
+    def _is_king_in_check_on_board(self, board: np.array, color: str) -> bool:
+        king_position = self._find_king_position(board, color)
+        if king_position is None:
+            return False
+        return self._is_square_attacked_on_board(board, king_position, self._opponent_color(color))
+
+    def _board_after_move(self, piece: str, initial_position: str, end_position: str) -> np.array:
+        board = self.board.copy()
+        initial_x, initial_y = self.logic2array(initial_position)
+        end_x, end_y = self.logic2array(end_position)
+        color = self._color_from_piece(piece)
+
+        if color is not None and 'pawn' in piece and int(board[end_x, end_y]) == 0 and initial_y != end_y:
+            # En passant removes the pawn behind the landing square.
+            captured_x = initial_x
+            captured_y = end_y
+            board[captured_x, captured_y] = 0
+
+        board[end_x, end_y] = board[initial_x, initial_y]
+        board[initial_x, initial_y] = 0
+
+        if 'king' in piece and abs(end_y - initial_y) == 2:
+            if end_y > initial_y:
+                rook_initial = f'h{initial_position[1]}'
+                rook_end = f'f{initial_position[1]}'
+            else:
+                rook_initial = f'a{initial_position[1]}'
+                rook_end = f'd{initial_position[1]}'
+            rook_initial_x, rook_initial_y = self.logic2array(rook_initial)
+            rook_end_x, rook_end_y = self.logic2array(rook_end)
+            board[rook_end_x, rook_end_y] = board[rook_initial_x, rook_initial_y]
+            board[rook_initial_x, rook_initial_y] = 0
+
+        return board
+
+    def _would_leave_king_in_check(self, piece: str, initial_position: str, end_position: str) -> bool:
+        color = self._color_from_piece(piece)
+        if color is None:
+            return True
+        board_after = self._board_after_move(piece, initial_position, end_position)
+        return self._is_king_in_check_on_board(board_after, color)
+
+    def _promotion_is_valid(self, piece: str, end_position: str, promote2: Optional[str]) -> bool:
+        if 'pawn' not in piece:
+            return promote2 is None
+        reaches_last_rank = ('white' in piece and end_position.endswith('8')) or ('black' in piece and end_position.endswith('1'))
+        if not reaches_last_rank:
+            return promote2 is None
+        if promote2 is None:
+            return False
+        if self._color_from_piece(promote2) != self._color_from_piece(piece):
+            return False
+        return any(name in promote2 for name in ('queen', 'rook', 'bishop', 'knight'))
+
+    def _update_castle_flags_after_move(self, piece: str, initial_position: str, end_position: str, captured_piece: str) -> None:
+        if 'king' in piece:
+            if 'white' in piece:
+                self.castle_flags['white king moved'] = True
+            else:
+                self.castle_flags['black king moved'] = True
+
+        if 'rook' in piece:
+            rook_flags = {
+                'a1': 'a1 rook moved',
+                'h1': 'h1 rook moved',
+                'a8': 'a8 rook moved',
+                'h8': 'h8 rook moved',
+            }
+            if initial_position in rook_flags:
+                self.castle_flags[rook_flags[initial_position]] = True
+
+        if 'rook' in captured_piece:
+            captured_rook_flags = {
+                'a1': 'a1 rook moved',
+                'h1': 'h1 rook moved',
+                'a8': 'a8 rook moved',
+                'h8': 'h8 rook moved',
+            }
+            if end_position in captured_rook_flags:
+                self.castle_flags[captured_rook_flags[end_position]] = True
+
     def clear_board(self) -> None:
         """
         Clears all history and pieces from the board
@@ -194,552 +565,281 @@ class ChessBoard:
             in_coords[i] = self.array2logic(x, y)
         return in_coords
 
-    def allowed_movements(self, 
-                          piece:str, 
-                          position:str, 
-                          in_check:bool=False, 
-                          restrict_turn:bool=True,
-                          remove_own:bool=True
-                          ) -> List[str]:
+    def allowed_movements(
+        self,
+        piece: str,
+        position: str,
+        in_check: bool = False,
+        restrict_turn: bool = True,
+        remove_own: bool = True,
+    ) -> List[str]:
         """
-        Calculates all legal movements of the piece.
+        Return legal target squares for one piece.
 
-        Parameters:
-            piece: a string indicating color and piece, e.g., 'white king'
-            position: a string of size 2 with a character from a to h and a number from 1 to 8, e.g., 'e4'
-            in_check: there is a check to the king
-            restrict_turn: a boolean that signas to only calculate movements for pieces of the current player
-            remove_own: a boolean that signals that the square should be eliminated 
-            if there is a friendly piece -> should be True except when calculating
-            for attaqued squares
-
-        Returns:
-            List[str]: a list with all legal movements of the piece in chess-like format
+        The pipeline is now explicit:
+            1. Generate pseudo-legal targets for the piece.
+            2. For attack maps, return pseudo-attacks without king-safety filtering.
+            3. For legal moves, simulate each target and reject moves that leave
+               the moving side's king in check.
         """
+        del in_check  # Kept for backward compatibility with older call sites.
 
-        #NOTE si el rey está en jaque las únicas piezas que se pueden mover son el mismo, y aquellas que lo protejen
-        
-        x, y                = self.logic2array(position) #Be careful with notation when converting to NumPy arrays
-        white_turn          = 'white' in piece
-        if restrict_turn and (white_turn != self.white_turn):
+        if not self._position_in_bounds(position):
             return []
 
-        if 'king' in piece:
-            piece_moves = np.array([[1,0], [1,1], [0,1], [-1,1], [-1,0], [-1,-1], [0,-1], [1,-1], [0,2], [0,-2]])
-            piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, is_king=True, remove_own=remove_own)
-        elif 'queen' in piece:
-            all_vectors = np.concatenate((self.line_vectors, self.diagonal_vectors))
-            piece_moves = self.raycast(x, y, all_vectors, white_turn, remove_own=remove_own)
-        elif 'bishop' in piece:
-            piece_moves = self.raycast(x, y, self.diagonal_vectors, white_turn, remove_own=remove_own)
-        elif 'knight' in piece:
-            piece_moves = np.array([[2,1], [1,2], [-1,2], [-2,1], [-2,-1], [-1,-2], [1,-2], [2,-1]]) 
-            piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
-        elif 'rook' in piece:
-            piece_moves = self.raycast(x, y, self.line_vectors, white_turn, remove_own=remove_own)
-        elif 'pawn' in piece:             
-            if white_turn:
-                if x - 1 >= 0 and self.board[x - 1, y] == 0: #There is no piece in foward movement
-                    piece_moves = np.array([[-1, 0]])
-                else:
-                    piece_moves = np.array([[0, 0]])
-                if x == 6 and self.board[5, y] == 0 and self.board[4, y] == 0: #Special movement for pawns in their starting rank
-                    piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
-                if y + 1 < BOARD_SIZE and x - 1 >= 0:
-                    if self.board[x - 1, y + 1] < 0: #There is an enemy piece
-                        piece_moves = np.concatenate((piece_moves, np.array([[-1, 1]])))
-                if y - 1 >= 0 and x - 1 >= 0:
-                    if self.board[x - 1, y - 1] < 0: #Idem
-                        piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
-                if x == 3: #En passant
-                    last_piece, last_init, last_end = self.last_turn
-                    if last_piece is not None and last_end is not None:
-                        xp, yp = self.logic2array(last_end)
-                        if 'pawn' in last_piece and xp == 3 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
-                            piece_moves = np.concatenate((piece_moves, np.array([[-1, yp - y]])))
-
-            else:
-                if x + 1 < BOARD_SIZE and self.board[x + 1, y] == 0: #There is no piece in foward movement
-                    piece_moves = np.array([[1, 0]])
-                else:
-                    piece_moves = np.array([[0, 0]])
-                if x == 1 and self.board[2, y] == 0 and self.board[3, y] == 0: #Special movement for pawns in their starting rank
-                    piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
-                if y + 1 < BOARD_SIZE and x + 1 < BOARD_SIZE:
-                    if self.board[x + 1, y + 1] > 0: #There is an enemy piece
-                        piece_moves = np.concatenate((piece_moves, np.array([[1, 1]])))
-                if y - 1 >= 0 and x + 1 < BOARD_SIZE:
-                    if self.board[x + 1, y - 1] > 0: #Idem
-                        piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
-                if x == 4: #En passant
-                    last_piece, last_init, last_end = self.last_turn
-                    if last_piece is not None and last_end is not None:
-                        xp, yp = self.logic2array(last_end)
-                        if 'pawn' in last_piece and xp == 4 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
-                            piece_moves = np.concatenate((piece_moves, np.array([[1, yp - y]])))
-            
-        else:
-            piece_moves = np.array([[0, 0]])
-
-        if in_check and 'king' not in piece: #If there is a check the piece can't move unless it can help the king
-            piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
-        
-        piece_moves = self._normalize_move_vectors(piece_moves)
-        if piece_moves.size == 0:
+        color = self._color_from_piece(piece)
+        if color is None:
             return []
 
-        destinations = np.array([x, y]) + piece_moves
-        legal_moves = [''] * len(destinations)
-        for i, (dest_x, dest_y) in enumerate(destinations):
-            move_vector = piece_moves[i]
-            if 'king' in piece and move_vector[0] == 0 and abs(move_vector[1]) == 2:
-                legal_moves[i] = self.array2logic(dest_x, dest_y)
-            else:
-                legal_moves[i] = self.array2logic(dest_x, dest_y)
-
-        if position in legal_moves: #Means that it didn't encounter new positions so we clean the answer
+        board_x, board_y = self.logic2array(position)
+        board_piece = self._piece_from_value(int(self.board[board_x, board_y]))
+        if board_piece != piece:
             return []
 
-        return legal_moves
-    
-    def raycast(self, x:int, y:int, vectors:np.array, white_turn:bool, remove_own:bool=True) -> np.array:
-        """
-        Calculate a raycast of the piece from direction vectors stoping when an obstacule is founded
+        if restrict_turn and color != self._active_color():
+            return []
 
-        Parameters:
-            x: x position in the board of the piece
-            y: y position in the board of the piece
-            vectors: an array with all plausible directions for the piece to go
-            white_turn: True is the calculations are done for white's player turn
-            remove_own: a boolean that signals that the square should be eliminated 
-            if there is a friendly piece -> should be True except when calculating
-            for attaqued squares
-
-        Returns
-            np.array: an array with all posible directions to travel acording to rules
-        """
-        moves = np.empty((0, 2), dtype=np.int64)
-        player_turn = 1 if white_turn else -1
-        for dx, dy in vectors: #All vectors should be unit vectors in the desired directions.
-            for i in range(1, BOARD_SIZE): #We advance i units in the desired direction and check for obstacles at each step.
-                xp, yp = x + i*dx, y + i*dy
-                if 0 <= xp < BOARD_SIZE and 0 <= yp < BOARD_SIZE: #Ensure movement stays within the board
-                    if player_turn * self.board[xp, yp] <= 0: #Check for enemy pieces (or empty squares); multiplying by player_turn adjusts the inequality.
-                        moves = np.concatenate((moves, np.array([[i*dx, i*dy]])))
-                        if player_turn * self.board[xp, yp] < 0: #Stops, but allows capturing; but first check for pinned pieces.
-                            for j in range(i + 1, BOARD_SIZE):
-                                x_check, y_check = x + j*dx, y + j*dy
-                                if 0 <= x_check < BOARD_SIZE and 0 <= y_check < BOARD_SIZE:
-                                    if player_turn * self.board[x_check, y_check] < 0 and np.abs(self.board[x_check, y_check]) != 6: #There is another enemy piece which is not a king -> nothing hapens
-                                        break
-                                    if player_turn * self.board[x_check, y_check] == -6 and self.array2logic(xp, yp) not in self.pinned_pieces: #There is an enemy king behind the lines so this piece must be pinned
-                                        self.pinned_pieces.append(self.array2logic(xp, yp))
-                                        break
-                            break
-                    else: 
-                        if remove_own: #Encounter a piece of the same color; stops immediately.
-                            break
-                        else: #If used for attaques squares agregate that only quare and then stop
-                            moves = np.concatenate((moves, np.array([[i * dx, i * dy]])))
-                            break
-                else: #Stops searching off the board
-                    break
-        return moves      
-          
-    def remove_illegal(self, 
-                       x:int, 
-                       y:int, 
-                       vectors:np.array, 
-                       in_check:bool, 
-                       white_turn:bool, 
-                       is_king:bool=False,
-                       remove_own:bool=True,
-                       ) -> np.array:
-        """
-        Attempts to remove ilegal moves that could be in from raw initial movements
-
-        Parameters:
-            x: x position in the board of the piece
-            y: y position in the board of the piece
-            vectors: an array with all plausible directions for the piece to go
-            in_check: there is a check to the king
-            white_turn: True is the calculations are done for white's player turn
-            is_king: a boolean that signals that the king is being evaluated here
-            remove_own: a boolean that signals that the square should be eliminated 
-            if there is a friendly piece -> should be True except when calculating
-            for attaqued squares
-
-        Returns
-            np.array: an array with all posible directions to travel acording to rules
-        """
-        def filter_out_of_bounds_and_friendly(vectors: np.array) -> np.array:
-            """
-            Filter movements that goes out of the board or that fall in own pieces
-            """
-            player_turn = 1 if white_turn else -1
-            valid_vectors = []
-            for vec in vectors:
-                dx, dy = vec
-                new_x, new_y = x + dx, y + dy
-                if not (0 <= new_x < BOARD_SIZE and 0 <= new_y < BOARD_SIZE):
-                    continue
-                if remove_own and player_turn * self.board[new_x, new_y] > 0:
-                    continue
-                valid_vectors.append(vec)
-            return self._normalize_move_vectors(valid_vectors)
-
-        def filter_castling_moves(vectors: np.array) -> np.array:
-            """
-            Apply castling restrictions for the king.
-            Remove castling moves when conditions that prevent it are met,
-            such as non-empty squares, check along the path, or if the piece (king or rook) has already moved.
-            """
-            elements_to_remove = []
-            king_moved = self.castle_flags['white king moved'] if white_turn else self.castle_flags['black king moved']
-            if in_check or king_moved:
-                elements_to_remove.extend([[0, 2], [0, -2]]) 
-            #Rook restrictions
-            if (white_turn and self.castle_flags['a1 rook moved']) or (not white_turn and self.castle_flags['a8 rook moved']):
-                if [0, -2] not in elements_to_remove:
-                    elements_to_remove.append([0, -2])
-            if (white_turn and self.castle_flags['h1 rook moved']) or (not white_turn and self.castle_flags['h8 rook moved']):
-                if [0, 2] not in elements_to_remove:
-                    elements_to_remove.append([0, 2])
-            #Empty squares restrictions
-            if white_turn:
-                if self.assess_empty_squares(['b1', 'c1', 'd1']).astype(int).sum() < 3 and [0, -2] not in elements_to_remove:
-                    elements_to_remove.append([0, -2])
-                if self.assess_empty_squares(['f1', 'g1']).astype(int).sum() < 2 and [0, 2] not in elements_to_remove:
-                    elements_to_remove.append([0, 2])
-            else:
-                if self.assess_empty_squares(['b8', 'c8', 'd8']).astype(int).sum() < 3 and [0, -2] not in elements_to_remove:
-                    elements_to_remove.append([0, -2])
-                if self.assess_empty_squares(['f8', 'g8']).astype(int).sum() < 2 and [0, 2] not in elements_to_remove:
-                    elements_to_remove.append([0, 2])
-            #Attacked squares restrictions
-            def squares_in(subset: List[str], target_set: List[str]) -> bool:
-                return all(elem in target_set for elem in subset)
-
-            enemy_moves = [] if self.initializing else self.assess_ataqued_squares(not white_turn)
-            if white_turn:
-                if squares_in(['a1', 'b1', 'c1', 'd1'], enemy_moves) and [0, -2] not in elements_to_remove:
-                    elements_to_remove.append([0, -2])
-                if squares_in(['f1', 'g1', 'h1'], enemy_moves) and [0, 2] not in elements_to_remove:
-                    elements_to_remove.append([0, 2])
-            else:
-                if squares_in(['a8', 'b8', 'c8', 'd8'], enemy_moves) and [0, -2] not in elements_to_remove:
-                    elements_to_remove.append([0, -2])
-                if squares_in(['f8', 'g8', 'h8'], enemy_moves) and [0, 2] not in elements_to_remove:
-                    elements_to_remove.append([0, 2])
-            
-            filtered = [vec for vec in vectors if list(vec) not in elements_to_remove]
-            return self._normalize_move_vectors(filtered)
-
-        def filter_moves_in_check(vectors: np.array) -> np.array:
-            """
-            If the piece is not the king and is in check, only moves that capture 
-            the attacker or block the threat are allowed.
-            """
-            player_turn = 1 if white_turn else -1
-            enemy_color = 'black' if white_turn else 'white'
-            
-            # Locate the enemy king
-            king_indices = np.where(self.board == 6 * player_turn)
-            if king_indices[0].size == 0:
-                return vectors
-            xk, yk = king_indices[0].item(), king_indices[1].item()
-            kings_position = self.array2logic(xk, yk)
-            
-            enemy_possible_moves = self.calculate_possible_moves(in_check=False, remove_own=False)[enemy_color]
-            attackers = [pos for pos, moves in enemy_possible_moves.items() if kings_position in moves]
-
-            if not attackers:
-                return vectors
-            if len(attackers) > 1:
-                return np.empty((0, 2), dtype=np.int64)  # If there is more than one attacker, the only option is to move the king.
-
-            attacker_position = attackers[0]
-            
-            # If the attacking piece is a sliding piece, blocking its trajectory is allowed.
-            piece_rays = ['queen', 'bishop', 'rook']
-            attacker_type = self.what_in(attacker_position).split(' ')[1]
-            onray = np.empty((0, 2), dtype=np.int64)
-            
-            if attacker_type in piece_rays:
-                xa, ya = self.logic2array(attacker_position)
-                dir_vector = np.sign(np.array([xk - xa, yk - ya]))
-                ray = self.raycast(xa, ya, dir_vector, white_turn, remove_own=True)
-                path = {tuple((vec + np.array([xa, ya])).tolist()) for vec in ray}
-                my_moves = {tuple((np.array([x, y]) + vec).tolist()) for vec in vectors}
-                intersection = np.array([np.array(m) for m in my_moves.intersection(path)])
-                if intersection.size > 0:
-                    onray = intersection - np.array([x, y])
-            
-            # Only moves that capture the attacker are allowed.
-            filtered = []
-            for vec in vectors:
-                pos = self.array2logic(x + vec[0], y + vec[1])
-                if pos == attacker_position:
-                    filtered.append(vec)
-            
-            filtered = self._normalize_move_vectors(filtered)
-            onray = self._normalize_move_vectors(onray)
-            if filtered.size and onray.size:
-                return np.concatenate((filtered, onray))
-            return filtered
-
-        vectors = filter_out_of_bounds_and_friendly(vectors) #Step 1: Filter out moves that are out of bounds or contain friendly pieces.
         if not remove_own:
-            return vectors
-        
-        if is_king: #Step 2: Additional filtering depending on whether the piece is the king or if it is in check.
-            vectors = filter_castling_moves(vectors)
-            enemy_moves = [] if self.initializing else self.assess_ataqued_squares(not white_turn)
-            valid = [vec for vec in vectors if self.array2logic(x + vec[0], y + vec[1]) not in enemy_moves]
-            vectors = self._normalize_move_vectors(valid)
-        elif in_check:
-            vectors = filter_moves_in_check(vectors)
+            return self._pseudo_targets_for_piece(self.board, piece, position, for_attack=True)
 
-        return vectors
+        pseudo_targets = self._pseudo_targets_for_piece(self.board, piece, position, for_attack=False)
+        legal_targets = [
+            target
+            for target in pseudo_targets
+            if not self._would_leave_king_in_check(piece, position, target)
+        ]
+        return self._dedupe_preserve_order(legal_targets)
 
-    def assess_king_status(self, white_player:bool, restrict_turn:bool=True) -> int:
+    def raycast(self, x: int, y: int, vectors: np.array, white_turn: bool, remove_own: bool = True) -> np.array:
         """
-        Search the position to check if the king is in checks or mated
+        Backward-compatible vector raycast wrapper.
+
+        New rule code uses target-square helpers, but minimax/debug code may still
+        call this method. It no longer mutates pinned-piece state as a side effect.
+        """
+        color = 'white' if white_turn else 'black'
+        targets = self._raycast_targets(self.board, x, y, vectors, color, for_attack=not remove_own)
+        origin = np.array([x, y], dtype=np.int64)
+        vectors_out = []
+        for target in targets:
+            target_x, target_y = self.logic2array(target)
+            vectors_out.append(np.array([target_x, target_y], dtype=np.int64) - origin)
+        return self._normalize_move_vectors(vectors_out)
+
+    def remove_illegal(
+        self,
+        x: int,
+        y: int,
+        vectors: np.array,
+        in_check: bool,
+        white_turn: bool,
+        is_king: bool = False,
+        remove_own: bool = True,
+    ) -> np.array:
+        """
+        Backward-compatible vector filter.
+
+        Public rule generation no longer depends on this method, but keeping it
+        avoids breaking old experimental callers.
+        """
+        del in_check, is_king
+        color = 'white' if white_turn else 'black'
+        origin = self.array2logic(x, y)
+        piece = self._piece_from_value(int(self.board[x, y]))
+        valid_vectors = []
+
+        for dx, dy in self._normalize_move_vectors(vectors):
+            target_x, target_y = x + dx, y + dy
+            if not (0 <= target_x < BOARD_SIZE and 0 <= target_y < BOARD_SIZE):
+                continue
+            if remove_own and self._target_has_own_piece(self.board, target_x, target_y, color):
+                continue
+            target = self.array2logic(target_x, target_y)
+            if remove_own and piece != 'Empty square' and self._would_leave_king_in_check(piece, origin, target):
+                continue
+            valid_vectors.append([dx, dy])
+
+        return self._normalize_move_vectors(valid_vectors)
+
+    def assess_king_status(self, white_player: bool, restrict_turn: bool = True) -> int:
+        """
+        Return check/mate status for the requested side.
 
         Returns:
-            int:    -2 if it is a black's mate 
-                    -1 if it is a black's check
-                    0 if nothing
-                    1 if it is a white's check
-                    2 if it is a white's mate
-            enemy_movements: a dictionary with all posible movements and positions 
-            of enemy pieces that checks or mates the king
-            friendly_help: a dictionary with all posible movements and positions
-            of frendly pieces that can bloc the check or the mate
+            0: no check
+            1: white is in check
+            2: white is checkmated
+           -1: black is in check
+           -2: black is checkmated
         """
-        enemy_color     = 'black' if white_player else 'white'
-        player_turn     = 1 if white_player else -1 #Check for reverse code
-        x, y            = np.where(self.board == 6 * player_turn)
-        if x.size != 1 or y.size != 1:
-            return 0
-        x, y            = x.item(), y.item()
-        kings_position  = self.array2logic(x,y)
-        enemy_movements = {}
-        friendly_help   = {} #TODO Pin pieces
-        danger          = 0
-        for pos, moves in self.possible_moves[enemy_color].items():
-            if kings_position in moves:
-                danger += 1
-                enemy_movements[pos] = moves
-
-        danger = 1 if danger > 0 else 0
-        king = 'white ' if white_player else 'black '
-        king += 'king'
-        
-        if danger > 0:
-            kings_movements = self.allowed_movements(king, kings_position, in_check=True, restrict_turn=restrict_turn)
-            danger *= 2 if len(kings_movements) + len(friendly_help) == 0 else 1 #It is a Mate if the king has no scape neither can a friendly piece bloc the mate
-            #FIXME the king can be helped with a friendly piece which is not yet calculated
-        
-        return danger
-    
-    def assess_ataqued_squares(self, white_player:bool) -> List[str]:
-        """
-        Calculates and updates all movements that each piece can attack
-        """
-        possible_moves = self.calculate_possible_moves(remove_own=False)
+        del restrict_turn  # Kept for compatibility with older call sites.
         color = 'white' if white_player else 'black'
-        ataqued_squares = []
-        for position, moves in possible_moves[color].items():
-            if color in self.what_in(position):
-                ataqued_squares += moves
+        if not self._is_king_in_check_on_board(self.board, color):
+            return 0
 
-        unique_ataqued_squares = []
-        for square in ataqued_squares:
-            if square not in unique_ataqued_squares:
-                unique_ataqued_squares.append(square)
-        return unique_ataqued_squares
+        legal_moves = self.calculate_possible_moves()
+        has_escape = any(legal_moves[color].values())
+        magnitude = 1 if has_escape else 2
+        return magnitude if white_player else -magnitude
 
-    def assess_empty_squares(self, targets:List[str]) -> np.array:
+    def assess_ataqued_squares(self, white_player: bool) -> List[str]:
         """
-        Assess if targets squares are empty
+        Return all squares attacked by the selected side.
 
-        Parameters:
-            targets: a list of positions to assess
-
-        Returns:
-            np.array: an array of boolean items checking for each square if it is attacked
+        This intentionally uses pseudo-attacks rather than legal move generation:
+        attack maps are needed to validate king movement and castling, and should
+        not recurse through own-king safety filtering.
         """
-
-        squares_status = []
-        for square in targets:
-            squares_status.append('Empty' in self.what_in(square))
-
-        return np.array(squares_status)
-
-    def calculate_possible_moves(self, in_check:bool=False, remove_own:bool=True) -> Dict[str, List[str]]:
-        """
-        Calculates and updates all movements that each piece can perform
-        
-        Parameters:
-            in_check: there is a check to the king
-            remove_own: a boolean that signals that the square should be eliminated 
-            if there is a friendly piece -> should be True except when calculating
-            for attaqued squares
-
-        Returns:
-            Dict: a diccionary with position entry, and a list of positions for values indicating
-            where is legal that the piece in the key can move
-        """        
-        possible_moves = {'white': {}, 'black':{}}
+        color = 'white' if white_player else 'black'
+        attacked_squares: List[str] = []
         for x in range(BOARD_SIZE):
             for y in range(BOARD_SIZE):
-                if self.board[x, y] != 0:
-                    color = 'white' if self.board[x, y] > 0 else 'black'
-                    piece = color + ' '
-                    piece += self.num2name[np.abs(self.board[x, y]).item()]
-                    position = self.array2logic(x,y)
-                    movements = self.allowed_movements(piece, position, restrict_turn=False, in_check=in_check, remove_own=remove_own)
-                    if len(movements) > 0:
-                        possible_moves[color][position] = movements
-        
-        for color_key in ('white', 'black'): #Filtering pinned pieces
-            for key in list(possible_moves[color_key].keys()):
-                if key in self.pinned_pieces:
-                    del possible_moves[color_key][key]
+                value = int(self.board[x, y])
+                if value == 0 or self._color_from_value(value) != color:
+                    continue
+                piece = self._piece_from_value(value)
+                position = self.array2logic(x, y)
+                attacked_squares.extend(self._pseudo_targets_for_piece(self.board, piece, position, for_attack=True))
+        return self._dedupe_preserve_order(attacked_squares)
 
+    def assess_empty_squares(self, targets: List[str]) -> np.array:
+        """
+        Assess whether target squares are empty.
+        """
+        squares_status = []
+        for square in targets:
+            if not self._position_in_bounds(square):
+                squares_status.append(False)
+                continue
+            x, y = self.logic2array(square)
+            squares_status.append(int(self.board[x, y]) == 0)
+        return np.array(squares_status)
+
+    def calculate_possible_moves(self, in_check: bool = False, remove_own: bool = True) -> Dict[str, Dict[str, List[str]]]:
+        """
+        Calculate moves grouped by color and origin square.
+
+        ``remove_own=True`` returns legal moves. ``remove_own=False`` returns
+        attack maps for compatibility with older callers.
+        """
+        del in_check  # Legal filtering is now based on board simulation.
+        possible_moves: Dict[str, Dict[str, List[str]]] = {'white': {}, 'black': {}}
+        for x in range(BOARD_SIZE):
+            for y in range(BOARD_SIZE):
+                value = int(self.board[x, y])
+                if value == 0:
+                    continue
+                color = self._color_from_value(value)
+                if color is None:
+                    continue
+                piece = self._piece_from_value(value)
+                position = self.array2logic(x, y)
+                moves = self.allowed_movements(
+                    piece,
+                    position,
+                    restrict_turn=False,
+                    remove_own=remove_own,
+                )
+                if moves:
+                    possible_moves[color][position] = moves
         return possible_moves
 
-    def make_move(self, 
-                  piece:str, 
-                  initial_position:str, 
-                  end_position:str, 
-                  promote2:str=None, 
-                  add2history:bool=True
-                  ) -> Tuple[bool, str]:
+    def make_move(
+        self,
+        piece: str,
+        initial_position: str,
+        end_position: str,
+        promote2: str = None,
+        add2history: bool = True,
+    ) -> Tuple[bool, str]:
         """
-        Executes a move if it is legal.
-
-        Parameters:
-            piece: A string indicating the color and type of piece, e.g., 'white king'.
-            initial_position: A two-character string representing the starting position, e.g., 'e2'.
-            end_position: A two-character string representing the destination position, e.g., 'e4'.
-            promote: A string indicating the color and type of piece for pawn promotion, e.g., 'white queen'.
-            add2history: A boolean that allows this move to be recorded
-
-        Returns:
-            True if the move is legal and successfully executed, False otherwise.
-        """        
-        def en_passant_conditions(piece:str, initial_position:str, end_position:str, last_piece:str, last_end:str) -> bool:
-            """
-            Set of conditions for en passant
-
-            Parameters
-                piece: A string indicating the color and type of piece, e.g., 'white king'.
-                initial_position: A two-character string representing the starting position, e.g., 'e2'.
-                end_position: A two-character string representing the destination position, e.g., 'e4'.
-                last_piece: A string indicating the color and type of piece last piece moved, e.g., 'white king'.
-                last_end: A two-character string representing the last destination position, e.g., 'e4'.
-
-            Returns
-                bool: True if en passant can be played in current conditions
-            """
-            if last_piece is None:
-                return False
-            allows = True
-            allows = allows and 'pawn' in piece
-            allows = allows and 'pawn' in last_piece
-            allows = allows and 'Empty' in self.what_in(end_position)
-            x, y    = self.logic2array(initial_position)
-            xp, yp  = self.logic2array(last_end)
-            specifics = ((self.white_turn, x, xp) == (True, 3, 3)) or ((self.white_turn, x, xp) == (False, 4, 4)) 
-            allows = allows and specifics
-            allows = allows and np.abs(y-yp) == 1
-            return allows
-
-        king_status = self.assess_king_status(self.white_turn)
-        if np.abs(king_status) == 2:
+        Execute a move when it is legal and update board, turn, history and bitboard.
+        """
+        if not self._position_in_bounds(initial_position) or not self._position_in_bounds(end_position):
             return False, ''
 
-        moving_color = 'white' if 'white' in piece else 'black'
-        if initial_position in self.possible_moves[moving_color]:
-            if end_position in self.possible_moves[moving_color][initial_position]:
-                movement = self.notation_from_move(piece, initial_position, end_position)
-                last_piece, last_init, last_end = self.last_turn
-                self.last_turn = (piece, initial_position, end_position) #Enables en passant
-
-                if en_passant_conditions(piece, initial_position, end_position, last_piece, last_end): 
-                    self.set_piece('Empty square', last_end)
-                    movement = initial_position[0] + 'x' + movement
-                
-                self.set_piece('Empty square', initial_position)
-                self.set_piece(piece, end_position)
-                
-                if movement == 'O-O': #King movement is already done, we need to move the rook
-                    if self.white_turn:
-                        self.set_piece('Empty square', 'h1')
-                        self.set_piece('white rook', 'f1')
-                    else:
-                        self.set_piece('Empty square', 'h8')
-                        self.set_piece('black rook', 'f8')
-                if movement == 'O-O-O': #Same
-                    if self.white_turn:
-                        self.set_piece('Empty square', 'a1')
-                        self.set_piece('white rook', 'd1')
-                    else:
-                        self.set_piece('Empty square', 'a8')
-                        self.set_piece('black rook', 'd8')
-                
-                if promote2 is not None and 'pawn' in piece:
-                    if (self.white_turn and '8' in end_position) or (not self.white_turn and '1' in end_position):
-                        self.set_piece(promote2, end_position)
-                        promotions = {'queen' : 'Q', 'rook' : 'R', 'knight' : 'N', 'bishop' : 'B'}
-                        movement += '=' + promotions[promote2.split(' ')[1]]
-
-                if 'x' in movement: #TODO add to captured pieces whatever in end_position
-                    pass
-
-                if 'K' in movement:
-                    if self.white_turn:
-                        self.castle_flags['white king moved'] = True
-                    else:
-                        self.castle_flags['black king moved'] = True
-                elif 'R' in movement:
-                    if initial_position == 'a1':
-                        self.castle_flags['a1 rook moved'] = True
-                    elif initial_position == 'h1':
-                        self.castle_flags['h1 rook moved'] = True
-                    elif initial_position == 'a8':
-                        self.castle_flags['a8 rook moved'] = True
-                    elif initial_position == 'h8':
-                        self.castle_flags['h8 rook moved'] = True
-                
-                self.pinned_pieces = []
-                self.possible_moves = self.calculate_possible_moves() #Recalculate legal moves just after modifying the board to check the impact
-                king_status = self.assess_king_status(not self.white_turn, restrict_turn=False)
-                if np.abs(king_status) == 1:
-                    self.possible_moves = self.calculate_possible_moves(in_check=True)
-                    movement += '+'
-                elif np.abs(king_status) == 2:                
-                    movement += '#'
-
-                if add2history:
-                    fen = self.numpy2fen(self.board)
-                    if self.white_turn:
-                        self.history.append([[movement], [fen]])
-                    else:
-                        self.history[-1][0].append(movement)
-                        self.history[-1][1].append(fen)
-
-                turn, _ = self.pointer
-                if not self.white_turn:
-                    turn += 1
-                self.white_turn = not self.white_turn
-                self.pointer = (turn, self.white_turn)
-                return True, movement
-        else:
+        moving_color = self._color_from_piece(piece)
+        if moving_color is None or moving_color != self._active_color():
             return False, ''
-        
+
+        initial_x, initial_y = self.logic2array(initial_position)
+        end_x, end_y = self.logic2array(end_position)
+        if self._piece_from_value(int(self.board[initial_x, initial_y])) != piece:
+            return False, ''
+
+        if not self._promotion_is_valid(piece, end_position, promote2):
+            return False, ''
+
+        legal_moves = self.possible_moves.get(moving_color, {})
+        if end_position not in legal_moves.get(initial_position, []):
+            return False, ''
+
+        movement = self.notation_from_move(piece, initial_position, end_position)
+        captured_piece = self.what_in(end_position)
+        last_piece, last_initial, last_end = self.last_turn
+        en_passant_capture_square = None
+
+        if (
+            'pawn' in piece
+            and initial_y != end_y
+            and 'Empty' in captured_piece
+            and last_piece is not None
+            and last_initial is not None
+            and last_end is not None
+        ):
+            en_passant_capture_square = last_end
+            captured_piece = self.what_in(en_passant_capture_square)
+            movement = initial_position[0] + 'x' + end_position
+
+        self.set_piece('Empty square', initial_position)
+        if en_passant_capture_square is not None:
+            self.set_piece('Empty square', en_passant_capture_square)
+        self.set_piece(piece, end_position)
+
+        if 'king' in piece and abs(end_y - initial_y) == 2:
+            if end_y > initial_y:
+                rook_initial = f'h{initial_position[1]}'
+                rook_end = f'f{initial_position[1]}'
+            else:
+                rook_initial = f'a{initial_position[1]}'
+                rook_end = f'd{initial_position[1]}'
+            rook_piece = self.what_in(rook_initial)
+            self.set_piece('Empty square', rook_initial)
+            self.set_piece(rook_piece, rook_end)
+
+        if promote2 is not None:
+            self.set_piece(promote2, end_position)
+            promotions = {'queen': 'Q', 'rook': 'R', 'knight': 'N', 'bishop': 'B'}
+            movement += '=' + promotions[promote2.split(' ')[1]]
+
+        self._update_castle_flags_after_move(piece, initial_position, end_position, captured_piece)
+        self.last_turn = (piece, initial_position, end_position)
+        self.white_turn = not self.white_turn
+        self._refresh_possible_moves()
+
+        checked_color_is_white = self.white_turn
+        king_status = self.assess_king_status(checked_color_is_white, restrict_turn=False)
+        if np.abs(king_status) == 1:
+            movement += '+'
+        elif np.abs(king_status) == 2:
+            movement += '#'
+
+        if add2history:
+            fen = self.numpy2fen(self.board)
+            if moving_color == 'white':
+                self.history.append([[movement], [fen]])
+            elif self.history:
+                self.history[-1][0].append(movement)
+                self.history[-1][1].append(fen)
+            else:
+                self.history.append([['...', movement], ['', fen]])
+
+        turn, _ = self.pointer
+        if moving_color == 'black':
+            turn += 1
+        self.pointer = (turn, self.white_turn)
+        return True, movement
+
     def notation_from_move(self, piece: str, initial_position: str, end_position: str) -> str:
         """
         Attempts to describe the move in chess notation. 
@@ -997,12 +1097,12 @@ class ChessBoard:
             if len(history[-1][0]) == 1:
                 history[-1][0].append('quit')
             for i, ((white_move, black_move), (white_fen, black_fen)) in enumerate(self.history):
-                piece, initial_position, end_position = self.read_move(white_move)
+                piece, initial_position, end_position = self.read_move(white_move, True)
                 self.make_move(piece, initial_position, end_position)
                 self.white_turn = False
                 if black_move == 'quit':
                     break
-                piece, initial_position, end_position = self.read_move(black_move)
+                piece, initial_position, end_position = self.read_move(black_move, False)
                 self.make_move(piece, initial_position, end_position)
                 self.white_turn = True
         self.bitboard = ChessBitboard(self.board)
