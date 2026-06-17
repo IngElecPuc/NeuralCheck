@@ -1,5 +1,8 @@
 import numpy as np
-import bitboardops as bb
+try:
+    import bitboardops as bb
+except ModuleNotFoundError:
+    from neuralcheck import bitboardops_fallback as bb
 import re
 import pdb
 

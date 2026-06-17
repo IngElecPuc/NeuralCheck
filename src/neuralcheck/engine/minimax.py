@@ -1,5 +1,5 @@
 import numpy as np
-from src.neuralcheck.logic import ChessBoard
+from neuralcheck.logic import ChessBoard
 from typing import Tuple
 
 class DeductiveEvaluator:
@@ -25,7 +25,7 @@ class DeductiveEvaluator:
         board = ChessBoard(position, white_turn)
         
         if depth == 0 or '#' in position: #Corregir, busco la condición de juego ganado
-            return self.value_function(position)
+            return self.value_function(position), None
         
         if white_turn:
             max_eval = -np.inf

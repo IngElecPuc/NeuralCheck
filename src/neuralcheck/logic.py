@@ -1,33 +1,44 @@
 import numpy as np
-import bitboardops as bb
+try:
+    import bitboardops as bb
+except ModuleNotFoundError:
+    from neuralcheck import bitboardops_fallback as bb
 import yaml
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+from pathlib import Path
 from neuralcheck.bitboard import ChessBitboard
 from typing import Tuple, List, Dict
+
 BOARD_SIZE = 8
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class ChessBoard:
-    def __init__(self):
-        #NOTE This is a high level representation of the board. 
+    def __init__(self, board=None, white_turn: bool = True, position_file: str = None):
+        #NOTE This is a high level representation of the board.
         #It uses a 8x8 numpy matrix (check put method to see piece representation).
         #This class has direct communication with the UI to handle it.
-        #This representation is not optimal for search or machine learning. 
+        #This representation is not optimal for search or machine learning.
         #There is a lower level for this using bitboard representations.
-        #That level is syncronized with this for tracking pourpuses.
-        
+        #That level is synchronized with this for tracking purposes.
+
         self.initializing       = True
         self._initialize_resources()
-        self.clear_board()
-        self.load_position('config/initial_position.yaml') 
-        self.line_vectors       = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]])
-        self.diagonal_vectors   = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]])
+        self.line_vectors       = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]], dtype=np.int64)
+        self.diagonal_vectors   = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]], dtype=np.int64)
         self.pinned_pieces      = []
+        self.pointer            = (0, True)
+
+        self.clear_board()
+        if board is None:
+            self.load_position(position_file or 'config/initial_position.yaml')
+        else:
+            self.board = np.array(board, dtype=np.int64)
+            if self.board.shape != (BOARD_SIZE, BOARD_SIZE):
+                raise ValueError(f'board must have shape {(BOARD_SIZE, BOARD_SIZE)}')
+            self.white_turn = bool(white_turn)
+            self.bitboard = ChessBitboard(self.board)
+
         self.possible_moves     = self.calculate_possible_moves()
         self.bitboard           = ChessBitboard(self.board)
-        self.pointer            = (0, True)
-        self.last_turn          = (None, None, None)
         self.initializing       = False
 
     def _initialize_resources(self) -> None:
@@ -42,6 +53,33 @@ class ChessBoard:
         self.num2name = {(num+1):name for num, name in enumerate(self._pieces)}
         self.name2num['Empty square'] = 0
         self.num2name[0] = 'Empty square'
+
+    def _resolve_path(self, filename: str) -> Path:
+        """Resolve project-relative files while still accepting absolute paths."""
+        path = Path(filename)
+        if path.is_absolute():
+            return path
+
+        cwd_path = Path.cwd() / path
+        if cwd_path.exists():
+            return cwd_path
+
+        project_path = PROJECT_ROOT / path
+        if project_path.exists():
+            return project_path
+
+        return project_path
+
+    def _normalize_move_vectors(self, vectors) -> np.array:
+        """Return movement vectors with a stable ``(n, 2)`` shape."""
+        if vectors is None:
+            return np.empty((0, 2), dtype=np.int64)
+
+        array = np.asarray(vectors, dtype=np.int64)
+        if array.size == 0:
+            return np.empty((0, 2), dtype=np.int64)
+
+        return array.reshape((-1, 2))
     
     def clear_board(self) -> None:
         """
@@ -200,12 +238,12 @@ class ChessBoard:
         elif 'rook' in piece:
             piece_moves = self.raycast(x, y, self.line_vectors, white_turn, remove_own=remove_own)
         elif 'pawn' in piece:             
-            if white_turn: 
-                if self.board[x - 1, y] == 0: #There is no piece in foward movement
+            if white_turn:
+                if x - 1 >= 0 and self.board[x - 1, y] == 0: #There is no piece in foward movement
                     piece_moves = np.array([[-1, 0]])
                 else:
                     piece_moves = np.array([[0, 0]])
-                if x == 6 and self.board[4, y] == 0: #Special movement for pawns in their starting rank
+                if x == 6 and self.board[5, y] == 0 and self.board[4, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[-2, 0]])))
                 if y + 1 < BOARD_SIZE and x - 1 >= 0:
                     if self.board[x - 1, y + 1] < 0: #There is an enemy piece
@@ -213,18 +251,19 @@ class ChessBoard:
                 if y - 1 >= 0 and x - 1 >= 0:
                     if self.board[x - 1, y - 1] < 0: #Idem
                         piece_moves = np.concatenate((piece_moves, np.array([[-1, -1]])))
-                if x == 3: #En passant 
+                if x == 3: #En passant
                     last_piece, last_init, last_end = self.last_turn
-                    xp, yp = self.logic2array(last_end)
-                    if 'pawn' in last_piece and xp == 3 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
-                        piece_moves = np.concatenate((piece_moves, np.array([[-1, yp - y]])))
+                    if last_piece is not None and last_end is not None:
+                        xp, yp = self.logic2array(last_end)
+                        if 'pawn' in last_piece and xp == 3 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
+                            piece_moves = np.concatenate((piece_moves, np.array([[-1, yp - y]])))
 
-            else: 
-                if self.board[x + 1, y] == 0: #There is no piece in foward movement
+            else:
+                if x + 1 < BOARD_SIZE and self.board[x + 1, y] == 0: #There is no piece in foward movement
                     piece_moves = np.array([[1, 0]])
                 else:
                     piece_moves = np.array([[0, 0]])
-                if x == 1 and self.board[3, y] == 0: #Special movement for pawns in their starting rank
+                if x == 1 and self.board[2, y] == 0 and self.board[3, y] == 0: #Special movement for pawns in their starting rank
                     piece_moves = np.concatenate((piece_moves, np.array([[2, 0]])))
                 if y + 1 < BOARD_SIZE and x + 1 < BOARD_SIZE:
                     if self.board[x + 1, y + 1] > 0: #There is an enemy piece
@@ -234,9 +273,10 @@ class ChessBoard:
                         piece_moves = np.concatenate((piece_moves, np.array([[1, -1]])))
                 if x == 4: #En passant
                     last_piece, last_init, last_end = self.last_turn
-                    xp, yp = self.logic2array(last_end)
-                    if 'pawn' in last_piece and xp == 4 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
-                        piece_moves = np.concatenate((piece_moves, np.array([[1, yp - y]])))
+                    if last_piece is not None and last_end is not None:
+                        xp, yp = self.logic2array(last_end)
+                        if 'pawn' in last_piece and xp == 4 and np.abs(y - yp) == 1: #Piece goes from starting does a 2 square movement and lands besides current piece
+                            piece_moves = np.concatenate((piece_moves, np.array([[1, yp - y]])))
             
         else:
             piece_moves = np.array([[0, 0]])
@@ -244,8 +284,9 @@ class ChessBoard:
         if in_check and 'king' not in piece: #If there is a check the piece can't move unless it can help the king
             piece_moves = self.remove_illegal(x, y, piece_moves, in_check, white_turn, remove_own=remove_own)
         
-        if type(piece_moves) == List: #FIXME sometimes piece_moves = [] when there are not movements other times piece_moves = np.array([[0, 0]])
-            piece_moves = piece_moves if piece_moves else np.array([[0, 0]])
+        piece_moves = self._normalize_move_vectors(piece_moves)
+        if piece_moves.size == 0:
+            return []
 
         destinations = np.array([x, y]) + piece_moves
         legal_moves = [''] * len(destinations)
@@ -345,7 +386,7 @@ class ChessBoard:
                 if remove_own and player_turn * self.board[new_x, new_y] > 0:
                     continue
                 valid_vectors.append(vec)
-            return np.array(valid_vectors)
+            return self._normalize_move_vectors(valid_vectors)
 
         def filter_castling_moves(vectors: np.array) -> np.array:
             """
@@ -392,7 +433,7 @@ class ChessBoard:
                     elements_to_remove.append([0, 2])
             
             filtered = [vec for vec in vectors if list(vec) not in elements_to_remove]
-            return np.array(filtered)
+            return self._normalize_move_vectors(filtered)
 
         def filter_moves_in_check(vectors: np.array) -> np.array:
             """
@@ -411,10 +452,12 @@ class ChessBoard:
             
             enemy_possible_moves = self.calculate_possible_moves(in_check=False, remove_own=False)[enemy_color]
             attackers = [pos for pos, moves in enemy_possible_moves.items() if kings_position in moves]
-            
+
+            if not attackers:
+                return vectors
             if len(attackers) > 1:
-                return np.array([])  # If there is more than one attacker, the only option is to move the king.
-            
+                return np.empty((0, 2), dtype=np.int64)  # If there is more than one attacker, the only option is to move the king.
+
             attacker_position = attackers[0]
             
             # If the attacking piece is a sliding piece, blocking its trajectory is allowed.
@@ -439,7 +482,8 @@ class ChessBoard:
                 if pos == attacker_position:
                     filtered.append(vec)
             
-            filtered = np.array(filtered)
+            filtered = self._normalize_move_vectors(filtered)
+            onray = self._normalize_move_vectors(onray)
             if filtered.size and onray.size:
                 return np.concatenate((filtered, onray))
             return filtered
@@ -452,7 +496,7 @@ class ChessBoard:
             vectors = filter_castling_moves(vectors)
             enemy_moves = [] if self.initializing else self.assess_ataqued_squares(not white_turn)
             valid = [vec for vec in vectors if self.array2logic(x + vec[0], y + vec[1]) not in enemy_moves]
-            vectors = np.array(valid)
+            vectors = self._normalize_move_vectors(valid)
         elif in_check:
             vectors = filter_moves_in_check(vectors)
 
@@ -476,6 +520,8 @@ class ChessBoard:
         enemy_color     = 'black' if white_player else 'white'
         player_turn     = 1 if white_player else -1 #Check for reverse code
         x, y            = np.where(self.board == 6 * player_turn)
+        if x.size != 1 or y.size != 1:
+            return 0
         x, y            = x.item(), y.item()
         kings_position  = self.array2logic(x,y)
         enemy_movements = {}
@@ -557,9 +603,10 @@ class ChessBoard:
                     if len(movements) > 0:
                         possible_moves[color][position] = movements
         
-        for key in list(possible_moves[color].keys()): #Filtering pinned pieces
-            if key in self.pinned_pieces:
-                del possible_moves[color][key]
+        for color_key in ('white', 'black'): #Filtering pinned pieces
+            for key in list(possible_moves[color_key].keys()):
+                if key in self.pinned_pieces:
+                    del possible_moves[color_key][key]
 
         return possible_moves
 
@@ -890,7 +937,9 @@ class ChessBoard:
                 if 'Empty' not in piece:
                     board[position] = piece
         board["Playe's Turn"] = 'white' if self.white_turn else 'black'
-        with open(filename, "w", encoding="utf-8") as file:
+        path = self._resolve_path(filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
             yaml.dump(board, file, allow_unicode=True, default_flow_style=False)
     
     def load_position(self, filename:str) -> None:
@@ -900,8 +949,12 @@ class ChessBoard:
         Parameters:
             filename: A string with the name and route to the target file
         """
-        with open(filename, "r", encoding="utf-8") as file:
+        path = self._resolve_path(filename)
+        with open(path, "r", encoding="utf-8") as file:
             board = yaml.safe_load(file)
+
+        if not isinstance(board, dict):
+            raise ValueError(f'Invalid position file: {path}')
 
         self.clear_board()
         for position, piece in board.items():
@@ -909,7 +962,7 @@ class ChessBoard:
                 continue
             self.set_piece(piece, position)
 
-        self.white_turn = board["Playe's Turn"] == 'white'
+        self.white_turn = board.get("Playe's Turn", 'white') == 'white'
         self.bitboard = ChessBitboard(self.board)
 
     def save_game(self, filename:str) -> None:
@@ -919,7 +972,9 @@ class ChessBoard:
         Parameters:
             filename: A string with the name and route to the target file
         """
-        with open(filename, "w", encoding="utf-8") as file:
+        path = self._resolve_path(filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
             yaml.dump(self.history, file, allow_unicode=True, default_flow_style=False)
 
     def load_game(self, filename:str, go2last:bool=False) -> None:
@@ -929,7 +984,8 @@ class ChessBoard:
         Parameters:
             filename: A string with the name and route to the target file
         """
-        with open(filename, "r", encoding="utf-8") as file:
+        path = self._resolve_path(filename)
+        with open(path, "r", encoding="utf-8") as file:
             history = yaml.safe_load(file)
 
         self.clear_board()

@@ -27,6 +27,22 @@ class ChessUI:
         master.geometry(f"{self.config['Size']['width']}x{self.config['Size']['height']}")
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
+
+        # ===== Agregar menú desplegable =====
+        # Se crea la barra de menú
+        self.menubar = tk.Menu(master)
+        master.config(menu=self.menubar)
+
+        # Se crea el submenú "Archivo"
+        archivo_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Archivo", menu=archivo_menu)
+
+        # Se agregan los comandos al menú Archivo
+        archivo_menu.add_command(label="Nueva partida", command=self.new_game)
+        archivo_menu.add_command(label="Cargar partida", command=self.load_game)
+        archivo_menu.add_command(label="Guardar partida", command=self.save_game)
+        archivo_menu.add_separator()
+        archivo_menu.add_command(label="Salir", command=master.quit)
         
         self.main_frame = tk.Frame(master) #Principal frame for the board
         self.main_frame.grid(row=0, column=0, sticky="nsew")

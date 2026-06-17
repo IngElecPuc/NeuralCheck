@@ -9,7 +9,5 @@
 void visualize(int64_t bitboard);
 int64_t getBitboardPosition(const char *position);
 
-static PyObject* pyVisualize(PyObject *self, PyObject *args);
-static PyObject* pyGetBitboardPosition(PyObject *self, PyObject *args);
 
 #endif // BITBOARD_EXTENSION
