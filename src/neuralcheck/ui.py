@@ -22,6 +22,7 @@ from neuralcheck.application.game_controller import GameController, MoveAttempt
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.ui_position_editor import PositionEditorWindow
 from neuralcheck.ui_theory import TheoryWindow
+from neuralcheck.ui_theory_map import NAVIGATION_CONTEXTUAL, NAVIGATION_FIXED
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +56,7 @@ class ChessUI:
         self.clock_start_policy_var = tk.StringVar(master, value=self.clock.start_policy)
         self.coordinates = True
         self.coordinates_var = tk.BooleanVar(master, value=True)
+        self.theory_navigation_mode_var = tk.StringVar(master, value=NAVIGATION_FIXED)
 
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
@@ -65,6 +67,7 @@ class ChessUI:
         master.protocol("WM_DELETE_WINDOW", self.close)
 
         self.pieces = self._load_pieces()
+        self.preview_pieces = self._load_pieces(size=20)
         self.cols_str = ["a", "b", "c", "d", "e", "f", "g", "h"]
         if self.rotation:
             self.cols_str = self.cols_str[::-1]
@@ -112,6 +115,20 @@ class ChessUI:
         theory_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Teoría", menu=theory_menu)
         theory_menu.add_command(label="Abrir panel de teoría", command=self.open_theory_panel)
+        navigation_menu = tk.Menu(theory_menu, tearoff=0)
+        theory_menu.add_cascade(label="Modo de navegación", menu=navigation_menu)
+        navigation_menu.add_radiobutton(
+            label="Vista fija",
+            variable=self.theory_navigation_mode_var,
+            value=NAVIGATION_FIXED,
+            command=self.set_theory_navigation_mode,
+        )
+        navigation_menu.add_radiobutton(
+            label="Contextual",
+            variable=self.theory_navigation_mode_var,
+            value=NAVIGATION_CONTEXTUAL,
+            command=self.set_theory_navigation_mode,
+        )
 
     def _build_clock_menu(self, clock_menu: tk.Menu) -> None:
         grouped_controls = (
@@ -501,10 +518,12 @@ class ChessUI:
             return Image.merge("RGBA", (r2, g2, b2, a))
         return ImageOps.invert(image)
 
-    def _load_pieces(self) -> Dict[str, ImageTk.PhotoImage]:
+    def _load_pieces(self, size: Optional[int] = None) -> Dict[str, ImageTk.PhotoImage]:
+        target_size = size or self.cell_size
+
         def load_and_format(path: str) -> Image.Image:
             image = Image.open(self._resolve_asset_path(path)).convert("RGBA")
-            image = image.resize((self.cell_size, self.cell_size), Image.Resampling.LANCZOS)
+            image = image.resize((target_size, target_size), Image.Resampling.LANCZOS)
             return image
 
         images: Dict[str, ImageTk.PhotoImage] = {}
@@ -613,8 +632,14 @@ class ChessUI:
             on_board_changed=self._on_theory_board_changed,
             on_close=self._on_theory_window_close,
             on_move_draft_changed=self.refresh_theory_board_controls,
+            preview_piece_images=self.preview_pieces,
+            navigation_mode_var=self.theory_navigation_mode_var,
         )
         self.show_theory_board_controls()
+
+    def set_theory_navigation_mode(self) -> None:
+        if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.set_navigation_mode(self.theory_navigation_mode_var.get())
 
     def _on_theory_board_changed(self) -> None:
         self.refresh_board()

@@ -299,39 +299,112 @@ class TheoryController:
             path=path,
         )
 
-    def get_map_view(self, depth: int = 4, root_node_id: Optional[str] = None) -> TheoryMapView:
-        max_depth = max(1, int(depth))
-        root_id = root_node_id or self._selected_node_id
-        if root_id is None:
-            return TheoryMapView(None, self._selected_node_id, (), (), max_depth)
+    def get_map_view(
+        self,
+        depth: int = 4,
+        root_node_id: Optional[str] = None,
+        *,
+        forward_depth: Optional[int] = None,
+        backward_depth: int = 0,
+    ) -> TheoryMapView:
+        """Return a bounded graph projection for the visual theory map.
 
-        root = self.service.get_node(root_id)
-        if root is None:
-            return TheoryMapView(None, self._selected_node_id, (), (), max_depth)
+        ``depth`` is kept for backwards compatibility and maps to forward depth.
+        New callers should pass ``forward_depth`` and ``backward_depth`` so the
+        map can show context behind the selected node as well as continuations
+        ahead of it.
+        """
+        max_forward_depth = max(1, int(forward_depth if forward_depth is not None else depth))
+        max_backward_depth = max(0, int(backward_depth))
+        center_id = root_node_id or self._selected_node_id
+        if center_id is None:
+            return TheoryMapView(None, self._selected_node_id, (), (), max_forward_depth)
 
-        nodes: list[TheoryMapNode] = []
-        edges: list[TheoryMapEdge] = []
-        seen: set[str] = set()
+        center_node = self.service.get_node(center_id)
+        if center_node is None:
+            return TheoryMapView(None, self._selected_node_id, (), (), max_forward_depth)
 
-        def visit(node: TheoryNode, current_depth: int) -> None:
-            if node.id in seen or current_depth > max_depth:
+        nodes_by_id: dict[str, TheoryMapNode] = {}
+        edges_by_key: dict[tuple[str, str], TheoryMapEdge] = {}
+
+        def add_node(node: TheoryNode, current_depth: int) -> None:
+            if node.id not in nodes_by_id:
+                nodes_by_id[node.id] = self._map_node_from_theory_node(node, current_depth)
+
+        def add_edge(branch: TheoryBranch) -> None:
+            key = (branch.edge.parent_node_id, branch.edge.child_node_id)
+            if key not in edges_by_key:
+                edges_by_key[key] = TheoryMapEdge(
+                    parent_node_id=branch.edge.parent_node_id,
+                    child_node_id=branch.edge.child_node_id,
+                    move_san=branch.edge.move_san,
+                )
+
+        def visit_descendants(node: TheoryNode, current_depth: int) -> None:
+            if current_depth > max_forward_depth:
                 return
-            seen.add(node.id)
-            nodes.append(self._map_node_from_theory_node(node, current_depth))
-            if current_depth >= max_depth:
+            add_node(node, current_depth)
+            if current_depth >= max_forward_depth:
                 return
             for branch in self.service.get_children(node.id):
-                edges.append(
-                    TheoryMapEdge(
-                        parent_node_id=node.id,
-                        child_node_id=branch.node.id,
-                        move_san=branch.edge.move_san,
-                    )
-                )
-                visit(branch.node, current_depth + 1)
+                add_edge(branch)
+                visit_descendants(branch.node, current_depth + 1)
 
-        visit(root, 0)
-        return TheoryMapView(root.id, self._selected_node_id, tuple(nodes), tuple(edges), max_depth)
+        def visit_context_branch(branch: TheoryBranch, context_depth: int, remaining_depth: int) -> None:
+            """Add a branch that is visible through an ancestor context path.
+
+            This keeps siblings visible when the selected node changes. For
+            example, a sibling is reached by going one relation back to the
+            parent and one relation forward to that sibling, so it should remain
+            visible when backward context is enabled. Descendants of that sibling
+            get a smaller remaining budget than descendants of the selected
+            node.
+            """
+            add_edge(branch)
+            add_node(branch.node, context_depth)
+            if remaining_depth <= 0:
+                return
+            for child_branch in self.service.get_children(branch.node.id):
+                visit_context_branch(child_branch, context_depth + 1, remaining_depth - 1)
+
+        add_node(center_node, 0)
+        visit_descendants(center_node, 0)
+
+        current_id = center_node.id
+        ancestor_depth = -1
+        while abs(ancestor_depth) <= max_backward_depth:
+            branch = self.service.get_parent_branch(current_id)
+            if branch is None:
+                break
+            parent = self.service.get_node(branch.edge.parent_node_id)
+            if parent is None:
+                break
+            add_node(parent, ancestor_depth)
+            add_edge(branch)
+
+            # Sibling context: while an ancestor is visible, include its other
+            # children as lateral navigation targets. They are reached by going
+            # back to the ancestor and then forward again, so their descendants
+            # consume the remaining forward budget.
+            remaining_context_depth = max_forward_depth - abs(ancestor_depth) - 1
+            if remaining_context_depth >= 0:
+                for sibling_branch in self.service.get_children(parent.id):
+                    visit_context_branch(
+                        sibling_branch,
+                        context_depth=ancestor_depth + 1,
+                        remaining_depth=remaining_context_depth,
+                    )
+
+            current_id = parent.id
+            ancestor_depth -= 1
+
+        return TheoryMapView(
+            center_node.id,
+            self._selected_node_id,
+            tuple(nodes_by_id.values()),
+            tuple(edges_by_key.values()),
+            max_forward_depth,
+        )
 
     def _map_node_from_theory_node(self, node: TheoryNode, depth: int) -> TheoryMapNode:
         label = node.name.strip() if node.name and node.name.strip() else self._default_node_label(node)
@@ -439,6 +512,30 @@ class TheoryController:
                 return "Línea sincronizada: " + " ".join(book.initial_moves)
             return "Línea sincronizada desde la posición inicial"
         return "Posición independiente: se carga como FEN, sin reconstruir línea desde el inicio"
+
+    def selected_book_max_depth(self) -> int:
+        """Return the deepest root-to-leaf distance for the selected theory book."""
+        if self._selected_book_id is None:
+            return 0
+        root = self.service.get_root(self._selected_book_id)
+        if root is None:
+            return 0
+
+        visited: set[str] = set()
+
+        def depth_from(node_id: str) -> int:
+            if node_id in visited:
+                return 0
+            visited.add(node_id)
+            children = self.service.get_children(node_id)
+            if not children:
+                visited.discard(node_id)
+                return 0
+            result = 1 + max(depth_from(branch.node.id) for branch in children)
+            visited.discard(node_id)
+            return result
+
+        return depth_from(root.id)
 
     def _current_board_fen(self) -> str:
         if self.game_controller is None:

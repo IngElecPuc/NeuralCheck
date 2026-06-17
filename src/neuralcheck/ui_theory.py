@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, simpledialog
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Mapping, Optional
 
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.theory.models import TheoryLocalView, TheoryNode
@@ -21,12 +21,16 @@ class TheoryWindow:
         on_board_changed: Optional[Callable[[], None]] = None,
         on_close: Optional[Callable[[], None]] = None,
         on_move_draft_changed: Optional[Callable[[], None]] = None,
+        preview_piece_images: Optional[Mapping[str, tk.PhotoImage]] = None,
+        navigation_mode_var: Optional[tk.StringVar] = None,
     ):
         self.master = master
         self.controller = controller
         self.on_board_changed = on_board_changed
         self.on_close = on_close
         self.on_move_draft_changed = on_move_draft_changed
+        self.preview_piece_images = dict(preview_piece_images or {})
+        self.navigation_mode_var = navigation_mode_var or tk.StringVar(master, value="fixed")
         self.book_index: Dict[int, str] = {}
 
         self.window = tk.Toplevel(master)
@@ -209,10 +213,21 @@ class TheoryWindow:
         self.map_frame.grid(row=5, column=0, sticky="nsew", padx=4, pady=4)
         self.map_frame.rowconfigure(0, weight=1)
         self.map_frame.columnconfigure(0, weight=1)
-        self.theory_map = TheoryMapCanvas(self.map_frame, self.controller, on_node_selected=self._open_map_node)
+        self.theory_map = TheoryMapCanvas(
+            self.map_frame,
+            self.controller,
+            on_node_selected=self._open_map_node,
+            navigation_mode_var=self.navigation_mode_var,
+            on_parent_requested=self.open_parent_node,
+            on_first_child_requested=self.open_first_child,
+            on_previous_sibling_requested=lambda: self._navigate_sibling(-1),
+            on_next_sibling_requested=lambda: self._navigate_sibling(1),
+            on_load_selected_requested=self.load_selected_node_to_board,
+            preview_piece_images=self.preview_piece_images,
+        )
         self.theory_map.grid(row=0, column=0, sticky="nsew")
 
-        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter cargar nodo seleccionado"
+        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter cargar nodo seleccionado. Colores: padre azul · hijos verde · hermanos lila."
         tk.Label(self.main_frame, text=hint, anchor="w").grid(row=6, column=0, sticky="ew", padx=4, pady=(0, 2))
 
     def _bind_keys(self) -> None:
@@ -221,6 +236,11 @@ class TheoryWindow:
         self.window.bind("<Left>", lambda event: self._navigate_sibling(-1))
         self.window.bind("<Right>", lambda event: self._navigate_sibling(1))
         self.window.bind("<Return>", lambda event: self.load_selected_node_to_board())
+
+    def set_navigation_mode(self, mode: str) -> None:
+        self.navigation_mode_var.set(mode)
+        if hasattr(self, "theory_map"):
+            self.theory_map.set_navigation_mode(mode)
 
     def refresh_all(self) -> None:
         self.refresh_books()
