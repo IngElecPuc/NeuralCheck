@@ -10,6 +10,7 @@ from neuralcheck.theory.models import (
     DeletePreview,
     TheoryBook,
     TheoryBranch,
+    TheoryLocalView,
     TheoryNode,
     THEORY_SOURCE_INDEPENDENT,
     THEORY_SOURCE_SYNCHRONIZED,
@@ -98,6 +99,11 @@ class TheoryController:
         self._selected_node_id = None
         return book
 
+    def update_book(self, book_id: str, *, name: str) -> TheoryBook:
+        book = self.service.update_book(book_id, name=name)
+        self._selected_book_id = book.id
+        return book
+
     def delete_book(self, book_id: str) -> bool:
         deleted = self.service.delete_book(book_id)
         if deleted and self._selected_book_id == book_id:
@@ -176,6 +182,77 @@ class TheoryController:
             return None
         return self.service.get_node(self._selected_node_id)
 
+    def update_selected_node(
+        self,
+        *,
+        name: Optional[str] = None,
+        evaluation: Optional[str] = None,
+        captured_pieces: Optional[str] = None,
+    ) -> TheoryNode:
+        if self._selected_node_id is None:
+            raise ValueError("No theory node selected")
+        node = self.service.update_node(
+            self._selected_node_id,
+            name=name,
+            evaluation=evaluation,
+            captured_pieces=captured_pieces,
+        )
+        self._selected_book_id = node.book_id
+        self._selected_node_id = node.id
+        return node
+
+    def get_local_view(self) -> TheoryLocalView:
+        book = self.get_selected_book()
+        current = self.get_selected_node()
+        if current is None:
+            return TheoryLocalView(
+                book=book,
+                current_node=None,
+                parent_branch=None,
+                children=(),
+                siblings=(),
+                path=(),
+            )
+
+        parent = self.service.get_parent_branch(current.id)
+        children = tuple(self.service.get_children(current.id))
+        siblings: tuple[TheoryBranch, ...] = ()
+        if parent is not None:
+            siblings = tuple(self.service.get_children(parent.edge.parent_node_id))
+        path = tuple(self._path_to_node(current.id))
+        return TheoryLocalView(
+            book=book,
+            current_node=current,
+            parent_branch=parent,
+            children=children,
+            siblings=siblings,
+            path=path,
+        )
+
+    def select_first_child(self) -> Optional[TheoryNode]:
+        children = self.get_children()
+        if not children:
+            return None
+        return self.select_node(children[0].node.id)
+
+    def select_sibling(self, offset: int) -> Optional[TheoryNode]:
+        node = self.get_selected_node()
+        if node is None:
+            return None
+        parent = self.get_parent_branch(node.id)
+        if parent is None:
+            return node
+        siblings = self.get_children(parent.edge.parent_node_id)
+        if not siblings:
+            return node
+        ids = [branch.node.id for branch in siblings]
+        try:
+            index = ids.index(node.id)
+        except ValueError:
+            return node
+        next_index = max(0, min(len(siblings) - 1, index + offset))
+        return self.select_node(siblings[next_index].node.id)
+
     def get_children(self, node_id: Optional[str] = None) -> list[TheoryBranch]:
         target_node_id = node_id or self._selected_node_id
         if target_node_id is None:
@@ -252,13 +329,16 @@ class TheoryController:
 
     def _line_to_node(self, book: TheoryBook, node_id: str) -> list[str]:
         moves = list(book.initial_moves)
+        moves.extend(branch.edge.move_san for branch in self._path_to_node(node_id))
+        return moves
+
+    def _path_to_node(self, node_id: str) -> list[TheoryBranch]:
         path_moves = []
         current_id = node_id
         while True:
             branch = self.service.get_parent_branch(current_id)
             if branch is None:
                 break
-            path_moves.append(branch.edge.move_san)
+            path_moves.append(branch)
             current_id = branch.edge.parent_node_id
-        moves.extend(reversed(path_moves))
-        return moves
+        return list(reversed(path_moves))

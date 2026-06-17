@@ -39,6 +39,14 @@ class TheoryService:
     ) -> TheoryBook:
         return self.store.create_book(name, source_type=source_type, initial_moves=initial_moves)
 
+    def update_book(
+        self,
+        book_id: str,
+        *,
+        name: Optional[str] = None,
+    ) -> TheoryBook:
+        return self.store.update_book(book_id, name=name)
+
     def update_book_source(
         self,
         book_id: str,

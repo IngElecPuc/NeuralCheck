@@ -73,6 +73,27 @@ class TheoryBranch:
 
 
 @dataclass(frozen=True)
+class TheoryLocalView:
+    """Small navigation projection around the selected theory node.
+
+    This is not a graph renderer. It is a controller-level DTO that lets the
+    desktop panel show parent/current/children/siblings without learning how a
+    graph backend stores edges.
+    """
+
+    book: Optional[TheoryBook]
+    current_node: Optional[TheoryNode]
+    parent_branch: Optional[TheoryBranch]
+    children: Tuple[TheoryBranch, ...]
+    siblings: Tuple[TheoryBranch, ...]
+    path: Tuple[TheoryBranch, ...]
+
+    @property
+    def is_root(self) -> bool:
+        return self.current_node is not None and self.parent_branch is None
+
+
+@dataclass(frozen=True)
 class DeletePreview:
     """Subtree impact report used before destructive deletes."""
 

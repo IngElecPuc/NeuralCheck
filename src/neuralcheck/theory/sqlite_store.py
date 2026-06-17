@@ -82,6 +82,33 @@ class SQLiteTheoryGraphStore:
             raise RuntimeError("Created theory book could not be read back")
         return book
 
+
+    def update_book(
+        self,
+        book_id: str,
+        *,
+        name: Optional[str] = None,
+    ) -> TheoryBook:
+        self._require_existing_book(book_id)
+        clean_name = self._require_text(name, "book name")
+        now = self._now()
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    UPDATE theory_books
+                    SET name = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (clean_name, now, book_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Could not update theory book: {exc}") from exc
+        book = self.get_book(book_id)
+        if book is None:
+            raise RuntimeError("Updated theory book could not be read back")
+        return book
+
     def update_book_source(
         self,
         book_id: str,

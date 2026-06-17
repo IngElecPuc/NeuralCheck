@@ -216,3 +216,85 @@ def test_independent_source_label_is_explicit(tmp_path: Path):
         assert "sin reconstruir" in theory_controller.selected_book_source_label()
     finally:
         theory_controller.close()
+
+
+def test_update_book_and_node_metadata(service: TheoryService):
+    book = service.create_book("Italiana")
+    renamed = service.update_book(book.id, name="Giuoco Piano")
+    assert renamed.name == "Giuoco Piano"
+
+    root = service.create_root(book.id, INITIAL_FEN, name="Inicial")
+    updated = service.update_node(
+        root.id,
+        name="Posición inicial",
+        evaluation="=",
+        captured_pieces="ninguna",
+    )
+
+    assert updated.name == "Posición inicial"
+    assert updated.evaluation == "="
+    assert updated.captured_pieces == "ninguna"
+
+    with pytest.raises(ValueError):
+        service.update_book(book.id, name="  ")
+
+
+def test_controller_local_view_exposes_path_parent_children_and_siblings(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        game_controller.click_square("e2")
+        game_controller.click_square("e4")
+        book = theory_controller.create_book("Siciliana")
+        root = theory_controller.create_root_from_current_position(book.id, name="Después de e4")
+        c5 = theory_controller.add_child_by_move(root.id, "c5", name="Siciliana")
+        e6 = theory_controller.add_child_by_move(root.id, "e6", name="Francesa")
+        nf3 = theory_controller.add_child_by_move(c5.node.id, "Nf3", name="Abierta")
+        c3 = theory_controller.add_child_by_move(c5.node.id, "c3", name="Alapín")
+
+        theory_controller.select_node(nf3.node.id)
+        view = theory_controller.get_local_view()
+
+        assert view.book is not None
+        assert view.book.name == "Siciliana"
+        assert view.current_node is not None
+        assert view.current_node.name == "Abierta"
+        assert view.parent_branch is not None
+        assert view.parent_branch.node.name == "Siciliana"
+        assert [branch.edge.move_san for branch in view.path] == ["c5", "Nf3"]
+        assert [branch.edge.move_san for branch in view.siblings] == ["c3", "Nf3"]
+        assert view.children == ()
+
+        theory_controller.select_sibling(-1)
+        assert theory_controller.get_selected_node().name == "Alapín"
+
+        theory_controller.select_node(root.id)
+        assert [branch.edge.move_san for branch in theory_controller.get_local_view().children] == ["c5", "e6"]
+    finally:
+        theory_controller.close()
+
+
+def test_controller_updates_selected_node_metadata(tmp_path: Path):
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=GameController(),
+    )
+    try:
+        book = theory_controller.create_book("Repertorio")
+        root = theory_controller.create_root_from_current_position(book.id, name="Inicial")
+        theory_controller.select_node(root.id)
+
+        updated = theory_controller.update_selected_node(
+            name="Inicial editada",
+            evaluation="+=",
+            captured_pieces="sin capturas",
+        )
+
+        assert updated.name == "Inicial editada"
+        assert updated.evaluation == "+="
+        assert updated.captured_pieces == "sin capturas"
+    finally:
+        theory_controller.close()

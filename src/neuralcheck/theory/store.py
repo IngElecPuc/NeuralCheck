@@ -27,6 +27,13 @@ class TheoryGraphStore(Protocol):
         initial_moves: Tuple[str, ...] = (),
     ) -> TheoryBook: ...
 
+    def update_book(
+        self,
+        book_id: str,
+        *,
+        name: Optional[str] = None,
+    ) -> TheoryBook: ...
+
     def update_book_source(
         self,
         book_id: str,
