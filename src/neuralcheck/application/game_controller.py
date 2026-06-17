@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Protocol, Tuple
 
-from neuralcheck.logic import ChessBoard
+from neuralcheck.logic import ChessBoard, STARTING_FEN_PLACEMENT
 
 PromotionProvider = Callable[[], Optional[str]]
 MovePointer = Tuple[int, bool]
@@ -110,6 +110,19 @@ class PositionValidationResult:
     valid: bool
     errors: Tuple[str, ...] = ()
     warnings: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PositionSourceContext:
+    """How the current board position can be related to the initial game."""
+
+    source_type: str
+    initial_moves: Tuple[str, ...] = ()
+    warning: Optional[str] = None
+
+    @property
+    def is_synchronized(self) -> bool:
+        return self.source_type == "synchronized_line"
 
 
 class GameController:
@@ -295,6 +308,107 @@ class GameController:
     def current_fen(self, include_state: bool = True) -> str:
         return self._board.export_fen(include_state=include_state)
 
+    def current_position_source_context(self) -> PositionSourceContext:
+        """Classify the current board as synchronized or independent.
+
+        A synchronized line is reconstructible from the canonical initial
+        position by replaying the visible move history up to the current
+        pointer. A position created by the manual editor or by raw FEN loading is
+        considered an independent position unless it is exactly the initial
+        board.
+        """
+        initial_fen = f"{STARTING_FEN_PLACEMENT} w - - 0 1"
+        current_fen = self.current_fen(include_state=True)
+        if current_fen == initial_fen:
+            return PositionSourceContext("synchronized_line", ())
+
+        moves = self.current_line_moves()
+        if moves is not None and self._line_replays_to_current_position(moves):
+            return PositionSourceContext("synchronized_line", tuple(moves))
+
+        return PositionSourceContext(
+            "independent_position",
+            (),
+            "La posición actual no se puede reconstruir desde la partida inicial con el historial visible.",
+        )
+
+    def current_line_moves(self) -> Optional[List[str]]:
+        """Return SAN-like moves from the beginning up to the shown pointer."""
+        pointer_turn, pointer_white = self._board.pointer
+        if pointer_turn < 0:
+            return []
+        if pointer_turn >= len(self._board.history):
+            return None
+
+        moves: List[str] = []
+        for turn_index, entry in enumerate(self._board.history[: pointer_turn + 1]):
+            row_moves = self._extract_moves(entry)
+            if not row_moves:
+                continue
+
+            include_count = len(row_moves)
+            if turn_index == pointer_turn:
+                include_count = 1 if pointer_white else min(2, len(row_moves))
+
+            for move in row_moves[:include_count]:
+                if move and move != "...":
+                    moves.append(move)
+        return moves
+
+    def load_line_from_initial(self, moves: List[str] | Tuple[str, ...]) -> PositionValidationResult:
+        """Load a board by replaying a legal line from the initial position."""
+        replay_board = ChessBoard()
+        try:
+            for ply_index, move in enumerate(moves):
+                white_player = ply_index % 2 == 0
+                replay_board.white_turn = white_player
+                replay_board.possible_moves = replay_board.calculate_possible_moves()
+                move_without_promotion, promote_to = self._extract_promotion(move, white_player)
+                piece, origin, target = replay_board.read_move(move_without_promotion, white_player)
+                moved, _ = replay_board.make_move(
+                    piece,
+                    origin,
+                    target,
+                    promote2=promote_to,
+                    add2history=True,
+                )
+                if not moved:
+                    return PositionValidationResult(False, (f"No se pudo reproducir la jugada: {move}",))
+        except Exception as exc:
+            return PositionValidationResult(False, (f"No se pudo reproducir la línea: {exc}",))
+
+        self._board = replay_board
+        self.clear_selection()
+        return PositionValidationResult(True)
+
+    def _line_replays_to_current_position(self, moves: List[str]) -> bool:
+        validation = self._validate_line_against_fen(moves, self.current_fen(include_state=True))
+        return validation.valid
+
+    def _validate_line_against_fen(self, moves: List[str], expected_fen: str) -> PositionValidationResult:
+        original_board = self._board
+        original_selected_square = self._selected_square
+        original_selected_piece = self._selected_piece
+        try:
+            validation = self.load_line_from_initial(moves)
+            if not validation.valid:
+                return validation
+            actual_fen = self.current_fen(include_state=True)
+            if actual_fen != expected_fen:
+                return PositionValidationResult(
+                    False,
+                    (
+                        "La línea visible no reconstruye la posición actual.",
+                        f"Esperado: {expected_fen}",
+                        f"Obtenido: {actual_fen}",
+                    ),
+                )
+            return PositionValidationResult(True)
+        finally:
+            self._board = original_board
+            self._selected_square = original_selected_square
+            self._selected_piece = original_selected_piece
+
     def apply_manual_position(self, pieces: Dict[str, str], white_turn: bool) -> PositionValidationResult:
         validation = self.validate_manual_position(pieces, white_turn)
         if not validation.valid:
@@ -309,12 +423,12 @@ class GameController:
         self.clear_selection()
         return validation
 
-    def preview_fen_position(self, fen: str) -> Tuple[PositionValidationResult, Dict[str, str], bool]:
+    def apply_fen_position(self, fen: str) -> PositionValidationResult:
         try:
             candidate = ChessBoard()
             candidate.set_position_from_fen(fen, clear_history=True)
         except (KeyError, ValueError, IndexError) as exc:
-            return PositionValidationResult(False, (f"FEN inválido: {exc}",)), {}, True
+            return PositionValidationResult(False, (f"FEN inválido: {exc}",))
 
         pieces: Dict[str, str] = {}
         for file_name in self.BOARD_FILES:
@@ -325,14 +439,10 @@ class GameController:
                     pieces[position] = piece
 
         validation = self.validate_manual_position(pieces, candidate.white_turn)
-        return validation, pieces, candidate.white_turn
-
-    def apply_fen_position(self, fen: str) -> PositionValidationResult:
-        validation, pieces, white_turn = self.preview_fen_position(fen)
         if not validation.valid:
             return validation
 
-        self._board.set_position_from_pieces(pieces, white_turn=white_turn, clear_history=True)
+        self._board.set_position_from_fen(fen, clear_history=True)
         self.clear_selection()
         return validation
 

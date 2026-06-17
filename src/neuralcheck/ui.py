@@ -6,8 +6,11 @@ from tkinter import filedialog
 import yaml
 from PIL import Image, ImageOps, ImageTk
 
+from neuralcheck.application.clock import ChessClock
 from neuralcheck.application.game_controller import GameController, MoveAttempt
+from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.ui_position_editor import PositionEditorWindow
+from neuralcheck.ui_theory import TheoryWindow
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -33,9 +36,10 @@ class ChessUI:
         self.master = master
         self.rotation = rotation  # False for White's view, True for Black's view.
         self.controller = controller if controller is not None else GameController()
-        self.white_time = 180
-        self.black_time = 180
-        self.increments = 0
+        self.theory_controller = TheoryController.with_sqlite(game_controller=self.controller)
+        self.theory_window: Optional[TheoryWindow] = None
+        self.clock = ChessClock.rapid_3_0()
+        self.clock_after_id: Optional[str] = None
         self.coordinates = True
 
         master.rowconfigure(0, weight=1)
@@ -44,6 +48,7 @@ class ChessUI:
         self._build_menu(master)
         self._build_layout(master)
         self._configure_window_size(master)
+        master.protocol("WM_DELETE_WINDOW", self.close)
 
         self.pieces = self._load_pieces()
         self.cols_str = ["a", "b", "c", "d", "e", "f", "g", "h"]
@@ -53,7 +58,7 @@ class ChessUI:
         self.draw_board()
         self.draw_moves(see_end=False)
         self.board.bind("<Button-1>", self.on_click)
-        self.update_clock()
+        self.start_clock()
 
     def _load_config(self) -> dict:
         config_path = PROJECT_ROOT / "config" / "board.yaml"
@@ -79,6 +84,10 @@ class ChessUI:
         archivo_menu.add_command(label="Configurar posición", command=self.open_position_editor)
         archivo_menu.add_separator()
         archivo_menu.add_command(label="Salir", command=master.quit)
+
+        theory_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Teoría", menu=theory_menu)
+        theory_menu.add_command(label="Abrir panel de teoría", command=self.open_theory_panel)
 
     def _build_layout(self, master) -> None:
         self.main_frame = tk.Frame(master)
@@ -488,23 +497,82 @@ class ChessUI:
             self.refresh_board()
             self.draw_moves(see_end=False)
 
+
+    def open_theory_panel(self) -> None:
+        self.set_correspondence_clock()
+        if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.focus()
+            return
+
+        self.theory_window = TheoryWindow(
+            master=self.master,
+            controller=self.theory_controller,
+            on_board_changed=self._on_theory_board_changed,
+            on_close=self._on_theory_window_close,
+        )
+
+    def _on_theory_board_changed(self) -> None:
+        self.refresh_board()
+        self.draw_moves(see_beginning=True, see_end=False)
+
+    def _on_theory_window_close(self) -> None:
+        self.theory_window = None
+
+    def close(self) -> None:
+        self._cancel_clock_callback()
+        if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.close()
+        self.theory_controller.close()
+        self.master.destroy()
+
+    def set_rapid_clock(self) -> None:
+        self.clock.set_rapid_3_0()
+        self.start_clock()
+
+    def set_correspondence_clock(self) -> None:
+        self.clock.set_correspondence()
+        self.start_clock()
+
+    def start_clock(self) -> None:
+        self._cancel_clock_callback()
+        self._render_clock()
+        if self.clock.snapshot().running:
+            self.clock_after_id = self.master.after(1000, self.update_clock)
+
     def update_clock(self) -> None:
-        if self.controller.white_turn:
-            if self.white_time > 0:
-                self.white_time += self.increments
-                self.white_time -= 1
+        self.clock.tick(self.controller.white_turn)
+        self._render_clock()
+        if self.clock.snapshot().running:
+            self.clock_after_id = self.master.after(1000, self.update_clock)
         else:
-            if self.black_time > 0:
-                self.black_time += self.increments
-                self.black_time -= 1
+            self.clock_after_id = None
 
-        white_minutes, white_seconds = divmod(self.white_time, 60)
-        black_minutes, black_seconds = divmod(self.black_time, 60)
-        self.offboard.itemconfig(self.clock_white_id, text=f"White: {white_minutes:02d}:{white_seconds:02d}")
-        self.offboard.itemconfig(self.clock_black_id, text=f"Black: {black_minutes:02d}:{black_seconds:02d}")
+    def _cancel_clock_callback(self) -> None:
+        if self.clock_after_id is None:
+            return
+        try:
+            self.master.after_cancel(self.clock_after_id)
+        except tk.TclError:
+            pass
+        self.clock_after_id = None
 
-        if self.white_time > 0 and self.black_time > 0:
-            self.master.after(1000, self.update_clock)
+    def _render_clock(self) -> None:
+        snapshot = self.clock.snapshot()
+        if not snapshot.visible:
+            self.offboard.itemconfig(self.clock_white_id, text="", state="hidden")
+            self.offboard.itemconfig(self.clock_black_id, text="", state="hidden")
+            return
+
+        self.offboard.itemconfig(
+            self.clock_white_id,
+            text=snapshot.label_for_white(),
+            state="normal",
+        )
+        self.offboard.itemconfig(
+            self.clock_black_id,
+            text=snapshot.label_for_black(),
+            state="normal",
+        )
 
     def refresh_board(self) -> None:
         self.board.delete("all")
@@ -512,12 +580,9 @@ class ChessUI:
 
     def new_game(self) -> None:
         self.controller.new_game()
-        self.white_time = 180
-        self.black_time = 180
-        self.increments = 0
+        self.set_rapid_clock()
         self.refresh_board()
         self.draw_moves(see_end=False)
-        self.update_clock()
 
     def load_game(self) -> None:
         filename = filedialog.askopenfilename(
@@ -529,6 +594,7 @@ class ChessUI:
             return
 
         self.controller.load_game(filename)
+        self.set_rapid_clock()
         self.refresh_board()
         self.draw_moves(see_beginning=True, see_end=False)
 
