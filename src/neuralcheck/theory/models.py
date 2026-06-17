@@ -94,6 +94,49 @@ class TheoryLocalView:
 
 
 @dataclass(frozen=True)
+class TheoryMapNode:
+    """Node projection used by visual graph renderers."""
+
+    id: str
+    label: str
+    fen: str
+    side_to_move: str
+    evaluation: Optional[str]
+    depth: int
+    is_selected: bool = False
+
+
+@dataclass(frozen=True)
+class TheoryMapEdge:
+    """Edge projection used by visual graph renderers."""
+
+    parent_node_id: str
+    child_node_id: str
+    move_san: str
+
+
+@dataclass(frozen=True)
+class TheoryMapView:
+    """Depth-limited projection for the theory map canvas."""
+
+    root_node_id: Optional[str]
+    selected_node_id: Optional[str]
+    nodes: Tuple[TheoryMapNode, ...]
+    edges: Tuple[TheoryMapEdge, ...]
+    max_depth: int
+
+
+@dataclass(frozen=True)
+class TheoryMoveDraft:
+    """One board move waiting to become a theory branch."""
+
+    parent_node_id: str
+    move_san: str
+    board_before_fen: str
+    board_after_fen: str
+
+
+@dataclass(frozen=True)
 class DeletePreview:
     """Subtree impact report used before destructive deletes."""
 

@@ -147,28 +147,7 @@ class TheoryService:
         This keeps theory nodes synchronized with relation moves. The saved FEN
         comes from the rule engine, not from a possibly stale board widget.
         """
-        parent = self.store.get_node(parent_node_id)
-        if parent is None:
-            raise KeyError(f"Unknown parent node: {parent_node_id}")
-
-        clean_move = self._clean_move_text(move_san)
-        board = ChessBoard()
-        board.set_position_from_fen(parent.fen, clear_history=True)
-        white_player = board.white_turn
-        move_without_promotion, promote_to = self._extract_promotion(clean_move, white_player)
-        piece, origin, target = board.read_move(move_without_promotion, white_player)
-        moved, movement = board.make_move(
-            piece,
-            origin,
-            target,
-            promote2=promote_to,
-            add2history=False,
-        )
-        if not moved:
-            raise ValueError(f"La jugada no es legal desde el nodo padre: {move_san}")
-
-        normalized_fen = board.export_fen(include_state=True)
-        side_to_move = "white" if board.white_turn else "black"
+        parent, clean_move, normalized_fen, side_to_move = self.preview_child_by_move(parent_node_id, move_san)
         return self.store.add_child(
             parent_node_id=parent_node_id,
             fen=normalized_fen,
@@ -180,6 +159,32 @@ class TheoryService:
             evaluation=evaluation,
             captured_pieces=captured_pieces,
         )
+
+    def preview_child_by_move(self, parent_node_id: str, move_san: str) -> tuple[TheoryNode, str, str, str]:
+        """Return the position that would result from a child move without saving it."""
+        parent = self.store.get_node(parent_node_id)
+        if parent is None:
+            raise KeyError(f"Unknown parent node: {parent_node_id}")
+
+        clean_move = self._clean_move_text(move_san)
+        board = ChessBoard()
+        board.set_position_from_fen(parent.fen, clear_history=True)
+        white_player = board.white_turn
+        move_without_promotion, promote_to = self._extract_promotion(clean_move, white_player)
+        piece, origin, target = board.read_move(move_without_promotion, white_player)
+        moved, _ = board.make_move(
+            piece,
+            origin,
+            target,
+            promote2=promote_to,
+            add2history=False,
+        )
+        if not moved:
+            raise ValueError(f"La jugada no es legal desde el nodo padre: {move_san}")
+
+        normalized_fen = board.export_fen(include_state=True)
+        side_to_move = "white" if board.white_turn else "black"
+        return parent, clean_move, normalized_fen, side_to_move
 
     def get_children(self, node_id: str) -> list[TheoryBranch]:
         return self.store.get_children(node_id)

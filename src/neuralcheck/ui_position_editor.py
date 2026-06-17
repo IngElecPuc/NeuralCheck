@@ -7,6 +7,31 @@ from tkinter import messagebox
 from neuralcheck.application.game_controller import GameController
 
 
+EMPTY_SQUARE = "Empty square"
+
+
+def position_editor_palette_options() -> tuple[str, ...]:
+    """Return the 4x4 visual palette used by the manual position editor."""
+    return (
+        "black king",
+        "black queen",
+        "black rook",
+        "black bishop",
+        "black knight",
+        "black pawn",
+        EMPTY_SQUARE,
+        EMPTY_SQUARE,
+        "white king",
+        "white queen",
+        "white rook",
+        "white bishop",
+        "white knight",
+        "white pawn",
+        EMPTY_SQUARE,
+        EMPTY_SQUARE,
+    )
+
+
 class PositionEditorWindow:
     """Manual position editor for the desktop UI.
 
@@ -27,9 +52,12 @@ class PositionEditorWindow:
         self.controller = controller
         self.pieces_images = pieces_images
         self.cell_size = cell_size
+        self.palette_cell_size = cell_size
         self.rotation = rotation
         self.on_apply = on_apply
         self.draft_pieces: Dict[str, str] = controller.board_pieces()
+        self.palette_options = position_editor_palette_options()
+        self.selected_palette_index = self.palette_options.index("white pawn")
         self.selected_piece = tk.StringVar(value="white pawn")
         self.white_turn = tk.BooleanVar(value=controller.white_turn)
         self.fen_value = tk.StringVar(value=controller.current_fen(include_state=True))
@@ -46,6 +74,7 @@ class PositionEditorWindow:
 
         self._build_layout()
         self.draw_board()
+        self.draw_piece_palette()
 
     def _build_layout(self) -> None:
         self.window.columnconfigure(0, weight=0)
@@ -64,21 +93,35 @@ class PositionEditorWindow:
         controls.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         controls.columnconfigure(0, weight=1)
 
-        tk.Label(controls, text="Pieza").grid(row=0, column=0, sticky="w")
-        self.piece_list = tk.Listbox(controls, height=13, exportselection=False)
-        self.piece_list.grid(row=1, column=0, sticky="ew")
-        for piece in self.controller.piece_options():
-            self.piece_list.insert(tk.END, piece)
-        self.piece_list.selection_set(5)  # white pawn
-        self.piece_list.bind("<<ListboxSelect>>", self.on_piece_select)
+        palette_frame = tk.LabelFrame(controls, text="Pieza a colocar")
+        palette_frame.grid(row=0, column=0, sticky="ew")
+        palette_frame.columnconfigure(0, weight=1)
+        self.palette_canvas = tk.Canvas(
+            palette_frame,
+            width=self.palette_cell_size * 4,
+            height=self.palette_cell_size * 4,
+            highlightthickness=1,
+            highlightbackground="#b0b0b0",
+        )
+        self.palette_canvas.grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.palette_canvas.bind("<Button-1>", self.on_palette_click)
+
+        self.selected_piece_label = tk.StringVar(value=self._piece_label(self.selected_piece.get()))
+        tk.Label(palette_frame, textvariable=self.selected_piece_label, anchor="w").grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=4,
+            pady=(0, 4),
+        )
 
         turn_frame = tk.LabelFrame(controls, text="Turno")
-        turn_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        turn_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         tk.Radiobutton(turn_frame, text="Blancas", variable=self.white_turn, value=True).pack(anchor="w")
         tk.Radiobutton(turn_frame, text="Negras", variable=self.white_turn, value=False).pack(anchor="w")
 
         fen_frame = tk.LabelFrame(controls, text="FEN")
-        fen_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        fen_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         fen_frame.columnconfigure(0, weight=1)
         tk.Entry(fen_frame, textvariable=self.fen_value, width=52).grid(row=0, column=0, columnspan=3, sticky="ew")
         tk.Button(fen_frame, text="Cargar FEN", command=self.load_fen).grid(row=1, column=0, sticky="ew", pady=2)
@@ -86,24 +129,66 @@ class PositionEditorWindow:
         tk.Button(fen_frame, text="Limpiar", command=self.clear_board).grid(row=1, column=2, sticky="ew", pady=2)
 
         button_frame = tk.Frame(controls)
-        button_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        button_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
         tk.Button(button_frame, text="Aplicar", command=self.apply).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         tk.Button(button_frame, text="Cancelar", command=self.cancel).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         tk.Label(controls, textvariable=self.status_value, wraplength=360, justify="left").grid(
-            row=5,
+            row=4,
             column=0,
             sticky="ew",
             pady=(10, 0),
         )
 
-    def on_piece_select(self, event) -> None:
-        selection = self.piece_list.curselection()
-        if not selection:
+    def on_palette_click(self, event) -> None:
+        col = event.x // self.palette_cell_size
+        row = event.y // self.palette_cell_size
+        if not (0 <= col < 4 and 0 <= row < 4):
             return
-        self.selected_piece.set(self.piece_list.get(selection[0]))
+        index = row * 4 + col
+        if not (0 <= index < len(self.palette_options)):
+            return
+        self.selected_palette_index = index
+        self.selected_piece.set(self.palette_options[index])
+        self.selected_piece_label.set(self._piece_label(self.selected_piece.get()))
+        self.status_value.set(f"Pieza seleccionada: {self.selected_piece_label.get()}.")
+        self.draw_piece_palette()
+
+    def draw_piece_palette(self) -> None:
+        self.palette_canvas.delete("all")
+        colors = ["white", "gray"]
+        for index, piece in enumerate(self.palette_options):
+            row = index // 4
+            col = index % 4
+            x1 = col * self.palette_cell_size
+            y1 = row * self.palette_cell_size
+            x2 = x1 + self.palette_cell_size
+            y2 = y1 + self.palette_cell_size
+            self.palette_canvas.create_rectangle(x1, y1, x2, y2, fill=colors[(row + col) % 2], outline="#909090")
+
+            if piece == EMPTY_SQUARE:
+                self.palette_canvas.create_text(
+                    x1 + self.palette_cell_size / 2,
+                    y1 + self.palette_cell_size / 2,
+                    text="∅",
+                    font=("Arial", max(14, int(self.palette_cell_size * 0.35)), "bold"),
+                    fill="#555555",
+                )
+            else:
+                self.palette_canvas.create_image(x1, y1, image=self.pieces_images[piece], anchor="nw")
+
+            if index == self.selected_palette_index:
+                inset = 3
+                self.palette_canvas.create_rectangle(
+                    x1 + inset,
+                    y1 + inset,
+                    x2 - inset,
+                    y2 - inset,
+                    outline="black",
+                    width=4,
+                )
 
     def on_board_click(self, event) -> None:
         position = self._translate_position_px2logic(event.x, event.y)
@@ -111,7 +196,7 @@ class PositionEditorWindow:
             return
 
         piece = self.selected_piece.get()
-        if piece == "Empty square":
+        if piece == EMPTY_SQUARE:
             self.draft_pieces.pop(position, None)
         else:
             self.draft_pieces[position] = piece
@@ -177,14 +262,15 @@ class PositionEditorWindow:
 
     def load_fen(self) -> None:
         fen = self.fen_value.get().strip()
-        result, pieces, white_turn = self.controller.preview_fen_position(fen)
+        result = self.controller.apply_fen_position(fen)
         if not result.valid:
             messagebox.showerror("Posición inválida", "\n".join(result.errors), parent=self.window)
             return
 
-        self.draft_pieces = pieces
-        self.white_turn.set(white_turn)
-        self.status_value.set("FEN cargado en el editor. Presiona Aplicar para confirmar.")
+        self.draft_pieces = self.controller.board_pieces()
+        self.white_turn.set(self.controller.white_turn)
+        self.status_value.set("FEN cargado y aplicado.")
+        self.on_apply()
         self.draw_board()
 
     def clear_board(self) -> None:
@@ -255,3 +341,22 @@ class PositionEditorWindow:
         logic_col = self.cols_str[board_col]
         logic_row = board_row + 1 if self.rotation else 8 - board_row
         return f"{logic_col}{logic_row}"
+
+    @staticmethod
+    def _piece_label(piece: str) -> str:
+        labels = {
+            EMPTY_SQUARE: "Espacio vacío",
+            "white king": "Rey blanco",
+            "white queen": "Dama blanca",
+            "white rook": "Torre blanca",
+            "white bishop": "Alfil blanco",
+            "white knight": "Caballo blanco",
+            "white pawn": "Peón blanco",
+            "black king": "Rey negro",
+            "black queen": "Dama negra",
+            "black rook": "Torre negra",
+            "black bishop": "Alfil negro",
+            "black knight": "Caballo negro",
+            "black pawn": "Peón negro",
+        }
+        return labels.get(piece, piece)

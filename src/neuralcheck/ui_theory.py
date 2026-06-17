@@ -1,19 +1,14 @@
-"""Desktop panel for opening-theory tree CRUD and local navigation.
-
-This window is still an intermediate controller, not the final visual graph map.
-It presents a compact local view around the selected node: parent, current node,
-siblings and children. The storage backend remains hidden behind
-``TheoryController``.
-"""
+"""Desktop panel for opening-theory CRUD, local navigation and visual map."""
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, simpledialog
 from typing import Callable, Dict, Optional
 
 from neuralcheck.application.theory_controller import TheoryController
-from neuralcheck.theory.models import TheoryBranch, TheoryLocalView, TheoryNode
+from neuralcheck.theory.models import TheoryLocalView, TheoryNode
+from neuralcheck.ui_theory_map import TheoryMapCanvas
 
 
 class TheoryWindow:
@@ -25,18 +20,19 @@ class TheoryWindow:
         controller: TheoryController,
         on_board_changed: Optional[Callable[[], None]] = None,
         on_close: Optional[Callable[[], None]] = None,
+        on_move_draft_changed: Optional[Callable[[], None]] = None,
     ):
         self.master = master
         self.controller = controller
         self.on_board_changed = on_board_changed
         self.on_close = on_close
+        self.on_move_draft_changed = on_move_draft_changed
         self.book_index: Dict[int, str] = {}
-        self.view_item_actions: Dict[str, tuple[str, str]] = {}
 
         self.window = tk.Toplevel(master)
         self.window.title("Teoría")
-        self.window.geometry("980x620")
-        self.window.minsize(860, 540)
+        self.window.geometry("1120x760")
+        self.window.minsize(960, 620)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         self._build_layout()
@@ -54,6 +50,73 @@ class TheoryWindow:
         if self.on_close is not None:
             self.on_close()
         self.window.destroy()
+
+    def has_active_move_draft(self) -> bool:
+        return self.controller.get_move_draft() is not None
+
+    def register_board_move(self, move_san: Optional[str]) -> bool:
+        """Register one board move as a pending theory draft."""
+        if not move_san:
+            return False
+        try:
+            draft = self.controller.create_move_draft_from_board_move(move_san)
+        except Exception as exc:
+            messagebox.showerror("No se pudo preparar la jugada", str(exc), parent=self.window)
+            self._restore_selected_node_after_failed_draft()
+            return False
+
+        self.status_var.set(
+            f"Jugada preparada desde el tablero: {draft.move_san}. "
+            "Puedes agregarla como nodo o llevarla al formulario."
+        )
+        self._notify_move_draft_changed()
+        return True
+
+    def commit_board_move_as_node(self) -> bool:
+        """Persist the active board draft immediately as an unnamed child node."""
+        if self.controller.get_move_draft() is None:
+            self.status_var.set("No hay una jugada preparada desde el tablero.")
+            return False
+        try:
+            branch = self.controller.commit_move_draft()
+            validation = self.controller.load_node_to_board(branch.node.id)
+        except Exception as exc:
+            messagebox.showerror("No se pudo agregar el nodo", str(exc), parent=self.window)
+            return False
+        if not validation.valid:
+            messagebox.showerror("No se pudo sincronizar el tablero", "\n".join(validation.errors), parent=self.window)
+            return False
+        self.status_var.set("Nodo agregado desde el tablero.")
+        self._clear_child_form()
+        self._notify_board_changed()
+        self._notify_move_draft_changed()
+        self.refresh_all()
+        return True
+
+    def prepare_board_move_as_form(self) -> bool:
+        """Fill the manual child form from the active board draft without saving."""
+        draft = self.controller.get_move_draft()
+        if draft is None:
+            self.status_var.set("No hay una jugada preparada desde el tablero.")
+            return False
+        self._replace_entry_text(self.move_entry, draft.move_san)
+        self.status_var.set("Jugada copiada al formulario. Completa nombre/evaluación y presiona Agregar.")
+        self._notify_move_draft_changed()
+        return True
+
+    def cancel_board_move_draft(self, show_errors: bool = True) -> bool:
+        if self.controller.get_move_draft() is None:
+            return True
+        validation = self.controller.cancel_move_draft()
+        if not validation.valid and show_errors:
+            messagebox.showerror("No se pudo cancelar la jugada", "\n".join(validation.errors), parent=self.window)
+            return False
+        self.status_var.set("Jugada preparada cancelada. El tablero volvió al nodo seleccionado.")
+        self._clear_child_form(only_move_if_matching=False)
+        self._notify_board_changed()
+        self._notify_move_draft_changed()
+        self.refresh_all()
+        return True
 
     def _build_layout(self) -> None:
         self.window.rowconfigure(0, weight=1)
@@ -78,14 +141,14 @@ class TheoryWindow:
 
         self.main_frame = tk.Frame(self.window)
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
-        self.main_frame.rowconfigure(4, weight=1)
+        self.main_frame.rowconfigure(5, weight=1)
         self.main_frame.columnconfigure(0, weight=1)
 
         self.source_var = tk.StringVar(value="Sin entrada seleccionada")
-        tk.Label(self.main_frame, textvariable=self.source_var, anchor="w", wraplength=660).grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 4))
+        tk.Label(self.main_frame, textvariable=self.source_var, anchor="w", wraplength=740).grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 4))
 
         self.path_var = tk.StringVar(value="Ruta: —")
-        tk.Label(self.main_frame, textvariable=self.path_var, anchor="w", wraplength=660).grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
+        tk.Label(self.main_frame, textvariable=self.path_var, anchor="w", wraplength=740).grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
 
         self.node_frame = tk.LabelFrame(self.main_frame, text="Nodo seleccionado")
         self.node_frame.grid(row=2, column=0, sticky="ew", padx=4, pady=4)
@@ -130,6 +193,7 @@ class TheoryWindow:
         tk.Label(child_form, text="Jugada:").grid(row=0, column=0, sticky="w", padx=2, pady=2)
         self.move_entry = tk.Entry(child_form, width=12)
         self.move_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        self.move_entry.bind("<KeyRelease>", self._on_move_entry_key_release)
         tk.Label(child_form, text="Nombre:").grid(row=0, column=2, sticky="w", padx=2, pady=2)
         self.child_name_entry = tk.Entry(child_form, width=24)
         self.child_name_entry.grid(row=0, column=3, sticky="ew", padx=2, pady=2)
@@ -138,44 +202,25 @@ class TheoryWindow:
         self.child_eval_entry.grid(row=0, column=5, sticky="ew", padx=2, pady=2)
         tk.Button(child_form, text="Agregar", command=self.add_child_from_move).grid(row=0, column=6, padx=2, pady=2)
 
-        self.view_frame = tk.LabelFrame(self.main_frame, text="Vista local")
-        self.view_frame.grid(row=4, column=0, sticky="nsew", padx=4, pady=4)
-        self.view_frame.rowconfigure(0, weight=1)
-        self.view_frame.columnconfigure(0, weight=1)
+        self.status_var = tk.StringVar(value="Sin jugada preparada desde el tablero.")
+        tk.Label(self.main_frame, textvariable=self.status_var, anchor="w").grid(row=4, column=0, sticky="ew", padx=4, pady=(0, 2))
 
-        self.local_view = ttk.Treeview(
-            self.view_frame,
-            columns=("move", "name", "side", "evaluation"),
-            show="tree headings",
-            selectmode="browse",
-            height=10,
-        )
-        self.local_view.heading("#0", text="Rol")
-        self.local_view.heading("move", text="Jugada")
-        self.local_view.heading("name", text="Nombre")
-        self.local_view.heading("side", text="Turno")
-        self.local_view.heading("evaluation", text="Evaluación")
-        self.local_view.column("#0", width=120, stretch=False)
-        self.local_view.column("move", width=90, stretch=False)
-        self.local_view.column("name", width=260, stretch=True)
-        self.local_view.column("side", width=70, stretch=False)
-        self.local_view.column("evaluation", width=100, stretch=False)
-        self.local_view.grid(row=0, column=0, sticky="nsew")
-        self.local_view.bind("<Double-Button-1>", self._on_local_view_double_click)
+        self.map_frame = tk.LabelFrame(self.main_frame, text="Mapa visual")
+        self.map_frame.grid(row=5, column=0, sticky="nsew", padx=4, pady=4)
+        self.map_frame.rowconfigure(0, weight=1)
+        self.map_frame.columnconfigure(0, weight=1)
+        self.theory_map = TheoryMapCanvas(self.map_frame, self.controller, on_node_selected=self._open_map_node)
+        self.theory_map.grid(row=0, column=0, sticky="nsew")
 
-        scrollbar = ttk.Scrollbar(self.view_frame, orient="vertical", command=self.local_view.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.local_view.configure(yscrollcommand=scrollbar.set)
-
-        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter abrir selección"
-        tk.Label(self.main_frame, text=hint, anchor="w").grid(row=5, column=0, sticky="ew", padx=4, pady=(0, 2))
+        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter cargar nodo seleccionado"
+        tk.Label(self.main_frame, text=hint, anchor="w").grid(row=6, column=0, sticky="ew", padx=4, pady=(0, 2))
 
     def _bind_keys(self) -> None:
         self.window.bind("<Up>", lambda event: self._navigate_parent())
         self.window.bind("<Down>", lambda event: self._navigate_first_child())
         self.window.bind("<Left>", lambda event: self._navigate_sibling(-1))
         self.window.bind("<Right>", lambda event: self._navigate_sibling(1))
-        self.window.bind("<Return>", lambda event: self._open_selected_view_item())
+        self.window.bind("<Return>", lambda event: self.load_selected_node_to_board())
 
     def refresh_all(self) -> None:
         self.refresh_books()
@@ -199,7 +244,7 @@ class TheoryWindow:
         self.source_var.set(self.controller.selected_book_source_label())
         self._set_path_text(view)
         self._set_node_fields(view.current_node)
-        self._refresh_local_view(view)
+        self.theory_map.refresh()
 
     def create_book(self) -> None:
         name = simpledialog.askstring("Nueva entrada", "Nombre de la entrada:", parent=self.window)
@@ -282,12 +327,17 @@ class TheoryWindow:
             return
 
         try:
-            branch = self.controller.add_child_by_move(
-                node.id,
-                move_san=move_san,
-                name=name,
-                evaluation=evaluation,
-            )
+            draft = self.controller.get_move_draft()
+            if draft is not None and draft.move_san == move_san:
+                branch = self.controller.commit_move_draft(name=name, evaluation=evaluation)
+            else:
+                branch = self.controller.add_child_by_move(
+                    node.id,
+                    move_san=move_san,
+                    name=name,
+                    evaluation=evaluation,
+                )
+                self.controller.clear_move_draft()
             validation = self.controller.load_node_to_board(branch.node.id)
         except Exception as exc:
             messagebox.showerror("No se pudo agregar la continuación", str(exc), parent=self.window)
@@ -301,24 +351,22 @@ class TheoryWindow:
             )
             return
 
-        self.move_entry.delete(0, tk.END)
-        self.child_name_entry.delete(0, tk.END)
-        self.child_eval_entry.delete(0, tk.END)
-        if self.on_board_changed is not None:
-            self.on_board_changed()
+        self._clear_child_form()
+        self._notify_board_changed()
+        self._notify_move_draft_changed()
         self.refresh_all()
 
     def open_parent_node(self) -> None:
         branch = self.controller.get_parent_branch()
         if branch is None:
             return
-        self.controller.select_node(branch.node.id)
-        self.refresh_node_panel()
+        self._select_and_load_node(branch.node.id)
 
     def open_first_child(self) -> None:
-        if self.controller.select_first_child() is None:
+        node = self.controller.select_first_child()
+        if node is None:
             return
-        self.refresh_node_panel()
+        self.load_selected_node_to_board()
 
     def load_selected_node_to_board(self) -> None:
         node = self.controller.get_selected_node()
@@ -332,8 +380,8 @@ class TheoryWindow:
                 parent=self.window,
             )
             return
-        if self.on_board_changed is not None:
-            self.on_board_changed()
+        self._notify_board_changed()
+        self.refresh_node_panel()
 
     def delete_selected_view_subtree(self) -> None:
         node_id = self._selected_view_node_id() or self.controller.selected_node_id
@@ -368,21 +416,17 @@ class TheoryWindow:
         self.controller.select_book(book_id)
         self.refresh_node_panel()
 
-    def _on_local_view_double_click(self, event) -> None:
-        del event
-        self._open_selected_view_item()
+    def _open_map_node(self, node_id: str) -> None:
+        self._select_and_load_node(node_id)
 
-    def _open_selected_view_item(self) -> None:
-        selection = self.local_view.selection()
-        if not selection:
+    def _select_and_load_node(self, node_id: str) -> None:
+        self.controller.select_node(node_id)
+        validation = self.controller.load_node_to_board(node_id)
+        if not validation.valid:
+            messagebox.showerror("No se pudo cargar la posición", "\n".join(validation.errors), parent=self.window)
             return
-        action = self.view_item_actions.get(selection[0])
-        if action is None:
-            return
-        action_name, node_id = action
-        if action_name == "open":
-            self.controller.select_node(node_id)
-            self.refresh_node_panel()
+        self._notify_board_changed()
+        self.refresh_node_panel()
 
     def _navigate_parent(self):
         self.open_parent_node()
@@ -393,9 +437,17 @@ class TheoryWindow:
         return "break"
 
     def _navigate_sibling(self, offset: int):
-        self.controller.select_sibling(offset)
-        self.refresh_node_panel()
+        node = self.controller.select_sibling(offset)
+        if node is not None:
+            self.load_selected_node_to_board()
         return "break"
+
+    def _on_move_entry_key_release(self, event) -> None:
+        del event
+        if self.move_entry.get().strip():
+            return
+        if self.controller.get_move_draft() is not None:
+            self.cancel_board_move_draft(show_errors=True)
 
     def _set_path_text(self, view: TheoryLocalView) -> None:
         if view.current_node is None:
@@ -418,52 +470,6 @@ class TheoryWindow:
             self.node_fen.insert(tk.END, node.fen)
         self.node_fen.config(state="disabled")
 
-    def _refresh_local_view(self, view: TheoryLocalView) -> None:
-        self.view_item_actions.clear()
-        self.local_view.delete(*self.local_view.get_children())
-
-        if view.current_node is None:
-            return
-
-        if view.parent_branch is not None:
-            parent_item = self.local_view.insert(
-                "",
-                tk.END,
-                text="Padre",
-                values=(view.parent_branch.edge.move_san, self._node_label(view.parent_branch.node), view.parent_branch.node.side_to_move, view.parent_branch.node.evaluation or ""),
-            )
-            self.view_item_actions[parent_item] = ("open", view.parent_branch.node.id)
-
-        current_item = self.local_view.insert(
-            "",
-            tk.END,
-            text="Actual",
-            values=("", self._node_label(view.current_node), view.current_node.side_to_move, view.current_node.evaluation or ""),
-        )
-        self.view_item_actions[current_item] = ("open", view.current_node.id)
-        self.local_view.selection_set(current_item)
-
-        if view.siblings:
-            for branch in view.siblings:
-                if branch.node.id == view.current_node.id:
-                    continue
-                item = self.local_view.insert(
-                    "",
-                    tk.END,
-                    text="Hermano",
-                    values=(branch.edge.move_san, self._node_label(branch.node), branch.node.side_to_move, branch.node.evaluation or ""),
-                )
-                self.view_item_actions[item] = ("open", branch.node.id)
-
-        for branch in view.children:
-            item = self.local_view.insert(
-                "",
-                tk.END,
-                text="Hijo",
-                values=(branch.edge.move_san, self._node_label(branch.node), branch.node.side_to_move, branch.node.evaluation or ""),
-            )
-            self.view_item_actions[item] = ("open", branch.node.id)
-
     def _selected_book_id_from_list(self) -> Optional[str]:
         selection = self.book_list.curselection()
         if not selection:
@@ -474,13 +480,31 @@ class TheoryWindow:
         return self._selected_book_id_from_list() or self.controller.selected_book_id
 
     def _selected_view_node_id(self) -> Optional[str]:
-        selection = self.local_view.selection()
-        if not selection:
-            return None
-        action = self.view_item_actions.get(selection[0])
-        if action is None:
-            return None
-        return action[1]
+        return self.controller.selected_node_id
+
+    def _clear_child_form(self, only_move_if_matching: bool = True) -> None:
+        draft = self.controller.get_move_draft()
+        if not only_move_if_matching or draft is None or self.move_entry.get().strip() == draft.move_san:
+            self.move_entry.delete(0, tk.END)
+        self.child_name_entry.delete(0, tk.END)
+        self.child_eval_entry.delete(0, tk.END)
+
+    def _restore_selected_node_after_failed_draft(self) -> None:
+        node_id = self.controller.selected_node_id
+        if node_id is None:
+            return
+        validation = self.controller.load_node_to_board(node_id)
+        if validation.valid:
+            self._notify_board_changed()
+            self.refresh_node_panel()
+
+    def _notify_board_changed(self) -> None:
+        if self.on_board_changed is not None:
+            self.on_board_changed()
+
+    def _notify_move_draft_changed(self) -> None:
+        if self.on_move_draft_changed is not None:
+            self.on_move_draft_changed()
 
     @staticmethod
     def _replace_entry_text(entry: tk.Entry, value: Optional[str]) -> None:
@@ -488,6 +512,3 @@ class TheoryWindow:
         if value:
             entry.insert(0, value)
 
-    @staticmethod
-    def _node_label(node: TheoryNode) -> str:
-        return node.name or node.fen.split()[0][:36]

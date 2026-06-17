@@ -54,6 +54,7 @@ class ChessUI:
         self.clock_control_var = tk.StringVar(master, value=self.clock.mode)
         self.clock_start_policy_var = tk.StringVar(master, value=self.clock.start_policy)
         self.coordinates = True
+        self.coordinates_var = tk.BooleanVar(master, value=True)
 
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
@@ -104,6 +105,10 @@ class ChessUI:
         settings_menu.add_cascade(label="Reloj", menu=clock_menu)
         self._build_clock_menu(clock_menu)
 
+        board_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Tablero", menu=board_menu)
+        self._build_board_menu(board_menu)
+
         theory_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Teoría", menu=theory_menu)
         theory_menu.add_command(label="Abrir panel de teoría", command=self.open_theory_panel)
@@ -147,6 +152,13 @@ class ChessUI:
         clock_menu.add_separator()
         clock_menu.add_command(label="Pausar reloj", command=self.pause_clock)
         clock_menu.add_command(label="Reanudar reloj", command=self.resume_clock)
+
+    def _build_board_menu(self, board_menu: tk.Menu) -> None:
+        board_menu.add_checkbutton(
+            label="Mostrar coordenadas",
+            variable=self.coordinates_var,
+            command=self.toggle_coordinates,
+        )
 
     def _build_layout(self, master) -> None:
         self.main_frame = tk.Frame(master)
@@ -247,36 +259,47 @@ class ChessUI:
     def _build_control_panel(self) -> None:
         self.panel_controls = tk.Frame(self.main_frame)
         self.panel_controls.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
-        self.panel_controls.columnconfigure(0, weight=1)
+        self.panel_controls.columnconfigure(0, weight=0)
         self.panel_controls.columnconfigure(1, weight=1)
 
-        self.new_button = tk.Button(self.panel_controls, text="New Game", command=self.new_game)
+        self.basic_controls = tk.Frame(self.panel_controls)
+        self.basic_controls.grid(row=0, column=0, sticky="nw")
+        self.new_button = tk.Button(self.basic_controls, text="New Game", command=self.new_game)
         self.new_button.grid(row=0, column=0, padx=20, pady=5)
-        self.load_button = tk.Button(self.panel_controls, text="Load Game", command=self.load_game)
+        self.load_button = tk.Button(self.basic_controls, text="Load Game", command=self.load_game)
         self.load_button.grid(row=1, column=0, padx=20, pady=5)
-        self.save_button = tk.Button(self.panel_controls, text="Save Game", command=self.save_game)
+        self.save_button = tk.Button(self.basic_controls, text="Save Game", command=self.save_game)
         self.save_button.grid(row=2, column=0, padx=20, pady=5)
-        # HACK: Debug bridge kept from the original UI. It no longer reaches the
-        # ChessBoard directly; the controller owns that temporary boundary.
-        self.entry = tk.Entry(self.panel_controls, width=40)
-        self.entry.grid(row=0, column=1, columnspan=2, pady=5)
-        self.label = tk.Label(self.panel_controls, text="Texto enviado: ", font=("Arial", 12))
-        self.label.grid(row=1, column=1, columnspan=2, pady=5)
-        self.entry.bind("<Return>", self.send_text)
-        self.breakpoint_button = tk.Button(self.panel_controls, text="Breakpoint", command=self.self_breakpoint)
-        self.breakpoint_button.grid(row=2, column=1, pady=5)
 
-    def send_text(self, event) -> None:  # HACK: borrar en el futuro.
-        text = self.entry.get().strip()
-        if not text:
-            return
-
-        self.controller.make_debug_bitboard_move(text)
-        self.label.config(text=f"Texto enviado: {text}")
-        self.entry.delete(0, tk.END)
-
-    def self_breakpoint(self) -> None:  # HACK: borrar en el futuro.
-        breakpoint()
+        self.theory_board_controls = tk.LabelFrame(self.panel_controls, text="Teoría desde tablero")
+        self.theory_board_controls.grid(row=0, column=1, sticky="ew", padx=20, pady=5)
+        self.theory_board_controls.columnconfigure(0, weight=1)
+        self.theory_status_var = tk.StringVar(value="Mueve una pieza desde el nodo seleccionado para preparar una rama.")
+        tk.Label(self.theory_board_controls, textvariable=self.theory_status_var, anchor="w", wraplength=420).grid(
+            row=0, column=0, columnspan=3, sticky="ew", padx=4, pady=2
+        )
+        self.add_theory_node_button = tk.Button(
+            self.theory_board_controls,
+            text="Agregar nodo",
+            command=self.add_theory_node_from_board,
+            state="disabled",
+        )
+        self.add_theory_node_button.grid(row=1, column=0, padx=2, pady=2)
+        self.prepare_theory_move_button = tk.Button(
+            self.theory_board_controls,
+            text="Nueva jugada",
+            command=self.prepare_theory_move_from_board,
+            state="disabled",
+        )
+        self.prepare_theory_move_button.grid(row=1, column=1, padx=2, pady=2)
+        self.cancel_theory_move_button = tk.Button(
+            self.theory_board_controls,
+            text="Cancelar jugada",
+            command=self.cancel_theory_board_move,
+            state="disabled",
+        )
+        self.cancel_theory_move_button.grid(row=1, column=2, padx=2, pady=2)
+        self.theory_board_controls.grid_remove()
 
     def draw_moves(self, see_beginning: bool = False, see_end: bool = True) -> None:
         current_view = self.history_text.yview()[0]
@@ -529,9 +552,14 @@ class ChessUI:
         if target_position is None:
             return
 
+        if self._theory_has_active_move_draft():
+            self.theory_status_var.set("Guarda o cancela la jugada preparada antes de mover otra pieza.")
+            return
+
         result = self.controller.click_square(target_position, promotion_provider=self.pawn_promotion)
         if result.moved:
             self._on_live_move_completed(result)
+            self._register_theory_board_move(result)
             self.draw_moves()
         elif result.invalid_reason in {"illegal_move", "illegal_replay_move"}:
             self._print_invalid_move(result)
@@ -576,6 +604,7 @@ class ChessUI:
         self.set_correspondence_clock()
         if self.theory_window is not None and self.theory_window.exists():
             self.theory_window.focus()
+            self.show_theory_board_controls()
             return
 
         self.theory_window = TheoryWindow(
@@ -583,7 +612,9 @@ class ChessUI:
             controller=self.theory_controller,
             on_board_changed=self._on_theory_board_changed,
             on_close=self._on_theory_window_close,
+            on_move_draft_changed=self.refresh_theory_board_controls,
         )
+        self.show_theory_board_controls()
 
     def _on_theory_board_changed(self) -> None:
         self.refresh_board()
@@ -591,6 +622,61 @@ class ChessUI:
 
     def _on_theory_window_close(self) -> None:
         self.theory_window = None
+        self.hide_theory_board_controls()
+
+    def show_theory_board_controls(self) -> None:
+        self.theory_board_controls.grid()
+        self.refresh_theory_board_controls()
+
+    def hide_theory_board_controls(self) -> None:
+        self.theory_board_controls.grid_remove()
+
+    def refresh_theory_board_controls(self) -> None:
+        active = self._theory_has_active_move_draft()
+        state = "normal" if active else "disabled"
+        self.add_theory_node_button.config(state=state)
+        self.prepare_theory_move_button.config(state=state)
+        self.cancel_theory_move_button.config(state=state)
+        if active and self.theory_window is not None:
+            draft = self.theory_controller.get_move_draft()
+            if draft is not None:
+                self.theory_status_var.set(f"Jugada preparada: {draft.move_san}")
+        elif self.theory_window is not None:
+            self.theory_status_var.set("Mueve una pieza desde el nodo seleccionado para preparar una rama.")
+
+    def add_theory_node_from_board(self) -> None:
+        if self.theory_window is None:
+            return
+        self.theory_window.commit_board_move_as_node()
+        self.refresh_theory_board_controls()
+
+    def prepare_theory_move_from_board(self) -> None:
+        if self.theory_window is None:
+            return
+        self.theory_window.prepare_board_move_as_form()
+        self.refresh_theory_board_controls()
+
+    def cancel_theory_board_move(self) -> None:
+        if self.theory_window is None:
+            return
+        self.theory_window.cancel_board_move_draft()
+        self.refresh_theory_board_controls()
+
+    def _register_theory_board_move(self, result: MoveAttempt) -> None:
+        if self.theory_window is None or not self.theory_window.exists():
+            return
+        if self.theory_controller.selected_node_id is None:
+            self.theory_status_var.set("Selecciona un nodo de teoría para preparar ramas desde el tablero.")
+            return
+        self.theory_window.register_board_move(result.movement)
+        self.refresh_theory_board_controls()
+
+    def _theory_has_active_move_draft(self) -> bool:
+        return self.theory_window is not None and self.theory_window.exists() and self.theory_window.has_active_move_draft()
+
+    def toggle_coordinates(self) -> None:
+        self.coordinates = bool(self.coordinates_var.get())
+        self.refresh_board()
 
     def close(self) -> None:
         self._cancel_clock_callback()

@@ -167,3 +167,25 @@ def test_legacy_pre_move_fen_history_next_step_stays_aligned(tmp_path):
     assert rows[1].black_pointer is False
     assert controller.piece_at("c4") == "white bishop"
     assert controller.piece_at("f1").startswith("Empty")
+
+
+def test_position_editor_palette_is_visual_4x4_grid():
+    from neuralcheck.ui_position_editor import EMPTY_SQUARE, position_editor_palette_options
+
+    palette = position_editor_palette_options()
+    assert len(palette) == 16
+    assert palette.count(EMPTY_SQUARE) == 4
+    assert set(palette) >= {
+        "white king",
+        "white queen",
+        "white rook",
+        "white bishop",
+        "white knight",
+        "white pawn",
+        "black king",
+        "black queen",
+        "black rook",
+        "black bishop",
+        "black knight",
+        "black pawn",
+    }
