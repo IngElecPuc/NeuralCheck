@@ -7,6 +7,7 @@ import yaml
 from PIL import Image, ImageOps, ImageTk
 
 from neuralcheck.application.game_controller import GameController, MoveAttempt
+from neuralcheck.ui_position_editor import PositionEditorWindow
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,12 +38,12 @@ class ChessUI:
         self.increments = 0
         self.coordinates = True
 
-        master.geometry(f"{self.config['Size']['width']}x{self.config['Size']['height']}")
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
 
         self._build_menu(master)
         self._build_layout(master)
+        self._configure_window_size(master)
 
         self.pieces = self._load_pieces()
         self.cols_str = ["a", "b", "c", "d", "e", "f", "g", "h"]
@@ -75,24 +76,37 @@ class ChessUI:
         archivo_menu.add_command(label="Cargar partida", command=self.load_game)
         archivo_menu.add_command(label="Guardar partida", command=self.save_game)
         archivo_menu.add_separator()
+        archivo_menu.add_command(label="Configurar posición", command=self.open_position_editor)
+        archivo_menu.add_separator()
         archivo_menu.add_command(label="Salir", command=master.quit)
 
     def _build_layout(self, master) -> None:
         self.main_frame = tk.Frame(master)
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.main_frame.rowconfigure(0, weight=1)
+        self.main_frame.rowconfigure(1, weight=0)
         self.main_frame.columnconfigure(0, weight=1)
-        self.main_frame.columnconfigure(1, weight=1)
+        self.main_frame.columnconfigure(1, weight=0)
 
         self._build_board_panel()
         self._build_history_panel()
         self._build_control_panel()
 
+    def _configure_window_size(self, master) -> None:
+        """Keep the board from being clipped by fixed config dimensions."""
+        master.update_idletasks()
+        configured_width = int(self.config["Size"].get("width", 0))
+        configured_height = int(self.config["Size"].get("height", 0))
+        required_width = max(configured_width, master.winfo_reqwidth())
+        required_height = max(configured_height, master.winfo_reqheight())
+        master.minsize(required_width, required_height)
+        master.geometry(f"{required_width}x{required_height}")
+
     def _build_board_panel(self) -> None:
         self.panel_canvas = tk.Frame(self.main_frame)
-        self.panel_canvas.grid(row=0, column=0, sticky="nsew")
+        self.panel_canvas.grid(row=0, column=0, sticky="nw")
         self.panel_canvas.columnconfigure(0, weight=0)
-        self.panel_canvas.columnconfigure(1, weight=1)
+        self.panel_canvas.columnconfigure(1, weight=0)
 
         self.offboard = tk.Canvas(
             self.panel_canvas,
@@ -122,13 +136,14 @@ class ChessUI:
 
     def _build_history_panel(self) -> None:
         self.panel_history = tk.Frame(self.main_frame)
-        self.panel_history.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        self.panel_history.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=10, pady=10)
+        self.panel_history.rowconfigure(0, weight=1)
         self.panel_history.columnconfigure(0, weight=1)
 
-        self.history_text = tk.Text(self.panel_history, width=25, height=20, wrap=tk.WORD)
-        self.history_text.grid(row=0, column=1, sticky="ns", padx=10)
+        self.history_text = tk.Text(self.panel_history, width=25, height=24, wrap=tk.WORD)
+        self.history_text.grid(row=0, column=0, sticky="nsew")
         self.history_scrollbar = tk.Scrollbar(self.panel_history, command=self.history_text.yview)
-        self.history_scrollbar.grid(row=0, column=2, sticky="ns")
+        self.history_scrollbar.grid(row=0, column=1, sticky="ns")
         self.history_text.config(yscrollcommand=self.history_scrollbar.set)
 
         self.nav_frame = tk.Frame(self.panel_history)
@@ -146,6 +161,13 @@ class ChessUI:
         self.last_button = tk.Button(self.nav_frame, text="⏭", command=self.go_to_last, font=font)
         self.last_button.grid(row=0, column=4, padx=2, pady=2)
 
+        self.history_hint = tk.Label(
+            self.panel_history,
+            text="Click en una jugada para saltar a esa posición",
+            font=("Arial", 9),
+        )
+        self.history_hint.grid(row=2, column=0, columnspan=2, sticky="w")
+
     def _build_control_panel(self) -> None:
         self.panel_controls = tk.Frame(self.main_frame)
         self.panel_controls.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
@@ -158,7 +180,6 @@ class ChessUI:
         self.load_button.grid(row=1, column=0, padx=20, pady=5)
         self.save_button = tk.Button(self.panel_controls, text="Save Game", command=self.save_game)
         self.save_button.grid(row=2, column=0, padx=20, pady=5)
-
         # HACK: Debug bridge kept from the original UI. It no longer reaches the
         # ChessBoard directly; the controller owns that temporary boundary.
         self.entry = tk.Entry(self.panel_controls, width=40)
@@ -183,15 +204,36 @@ class ChessUI:
 
     def draw_moves(self, see_beginning: bool = False, see_end: bool = True) -> None:
         current_view = self.history_text.yview()[0]
+        self.history_text.config(state="normal")
         self.history_text.delete("1.0", tk.END)
 
         for row in self.controller.history_rows():
+            self.history_text.insert(tk.END, f"{row.turn_number}\t")
+
             white_pointer = "➡" if row.white_pointer else ""
-            black_pointer = "➡" if row.black_pointer else ""
-            self.history_text.insert(
-                tk.END,
-                f"{row.turn_number}\t{white_pointer + row.white_move}\t{black_pointer + row.black_move}\n",
+            white_tag = f"move_{row.turn_index}_white"
+            self.history_text.insert(tk.END, white_pointer + row.white_move, (white_tag,))
+            self.history_text.tag_bind(
+                white_tag,
+                "<Button-1>",
+                lambda event, turn=row.turn_index: self.jump_to_move(turn, True),
             )
+            self.history_text.tag_config(white_tag, foreground="black", underline=False)
+
+            self.history_text.insert(tk.END, "\t")
+            if row.black_move:
+                black_pointer = "➡" if row.black_pointer else ""
+                black_tag = f"move_{row.turn_index}_black"
+                self.history_text.insert(tk.END, black_pointer + row.black_move, (black_tag,))
+                self.history_text.tag_bind(
+                    black_tag,
+                    "<Button-1>",
+                    lambda event, turn=row.turn_index: self.jump_to_move(turn, False),
+                )
+                self.history_text.tag_config(black_tag, foreground="black", underline=False)
+            self.history_text.insert(tk.END, "\n")
+
+        self.history_text.config(state="disabled")
 
         if see_beginning:
             self.history_text.see("1.0")
@@ -426,6 +468,25 @@ class ChessUI:
         else:
             print("Los movimientos válidos para esa pieza son:")
         print(list(result.legal_targets) if result.legal_targets else "Ninguno")
+
+    def open_position_editor(self) -> None:
+        PositionEditorWindow(
+            master=self.master,
+            controller=self.controller,
+            pieces_images=self.pieces,
+            cell_size=self.cell_size,
+            rotation=self.rotation,
+            on_apply=self._on_position_editor_apply,
+        )
+
+    def _on_position_editor_apply(self) -> None:
+        self.refresh_board()
+        self.draw_moves(see_beginning=True, see_end=False)
+
+    def jump_to_move(self, turn_index: int, white_player: bool) -> None:
+        if self.controller.jump_to_move(turn_index, white_player):
+            self.refresh_board()
+            self.draw_moves(see_end=False)
 
     def update_clock(self) -> None:
         if self.controller.white_turn:

@@ -9,6 +9,7 @@ from neuralcheck.bitboard import ChessBitboard
 from typing import Tuple, List, Dict, Optional
 
 BOARD_SIZE = 8
+STARTING_FEN_PLACEMENT = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR'
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class ChessBoard:
@@ -25,7 +26,7 @@ class ChessBoard:
         self.line_vectors       = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]], dtype=np.int64)
         self.diagonal_vectors   = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]], dtype=np.int64)
         self.pinned_pieces      = []
-        self.pointer            = (0, True)
+        self.pointer            = (-1, True)
 
         self.clear_board()
         if board is None:
@@ -834,10 +835,8 @@ class ChessBoard:
             else:
                 self.history.append([['...', movement], ['', fen]])
 
-        turn, _ = self.pointer
-        if moving_color == 'black':
-            turn += 1
-        self.pointer = (turn, self.white_turn)
+        if add2history:
+            self.pointer = (len(self.history) - 1, moving_color == 'white')
         return True, movement
 
     def notation_from_move(self, piece: str, initial_position: str, end_position: str) -> str:
@@ -1022,6 +1021,80 @@ class ChessBoard:
                 candidates_dict = {self.what_in(position): position for position in candidates}
                 return candidates_dict.get(piece, candidates[0])
 
+    def set_position_from_pieces(
+        self,
+        pieces: Dict[str, str],
+        white_turn: bool = True,
+        clear_history: bool = True,
+    ) -> None:
+        """Replace the current board with an explicit piece map."""
+        preserved_history = [] if clear_history else self.history
+        preserved_pointer = (-1, True) if clear_history else self.pointer
+
+        self.clear_board()
+        for position, piece in pieces.items():
+            self.set_piece(piece, position)
+
+        self.white_turn = bool(white_turn)
+        self.history = preserved_history
+        self.pointer = preserved_pointer
+        self.last_turn = (None, None, None)
+        self._refresh_possible_moves()
+
+    def set_position_from_fen(
+        self,
+        fen: str,
+        clear_history: bool = True,
+    ) -> None:
+        """Replace the current board from a FEN string.
+
+        Only piece placement and active color are currently preserved. Castling,
+        en-passant and move counters remain outside the current domain contract.
+        """
+        fields = fen.strip().split()
+        if not fields:
+            raise ValueError('FEN is empty')
+
+        board = self.fen2numpy(fen)
+        white_turn = True
+        if len(fields) >= 2:
+            if fields[1] not in {'w', 'b'}:
+                raise ValueError("FEN active color must be 'w' or 'b'")
+            white_turn = fields[1] == 'w'
+
+        pieces: Dict[str, str] = {}
+        for x in range(BOARD_SIZE):
+            for y in range(BOARD_SIZE):
+                value = int(board[x, y])
+                if value == 0:
+                    continue
+                pieces[self.array2logic(x, y)] = self._piece_from_value(value)
+
+        self.set_position_from_pieces(pieces, white_turn=white_turn, clear_history=clear_history)
+
+    def export_fen(self, include_state: bool = True) -> str:
+        """Export the current board as FEN.
+
+        The current engine tracks piece placement and active side. Other FEN
+        fields are emitted with neutral placeholders until castling/en-passant
+        state is promoted to the position contract.
+        """
+        placement = self.numpy2fen(self.board)
+        if not include_state:
+            return placement
+        active_color = 'w' if self.white_turn else 'b'
+        return f'{placement} {active_color} - - 0 1'
+
+    def reset_to_initial_position(self, preserve_history: bool = True) -> None:
+        """Load the initial board and optionally keep the recorded move list."""
+        preserved_history = self.history if preserve_history else []
+        self.clear_board()
+        self.load_position('config/initial_position.yaml')
+        self.history = preserved_history
+        self.pointer = (-1, True)
+        self.last_turn = (None, None, None)
+        self._refresh_possible_moves()
+
     def save_position(self, filename:str) -> None:
         """
         Saves a position to a YAML file. It doesn't saves the plays.
@@ -1063,7 +1136,10 @@ class ChessBoard:
             self.set_piece(piece, position)
 
         self.white_turn = board.get("Playe's Turn", 'white') == 'white'
-        self.bitboard = ChessBitboard(self.board)
+        if hasattr(self, 'possible_moves'):
+            self._refresh_possible_moves()
+        else:
+            self.bitboard = ChessBitboard(self.board)
 
     def save_game(self, filename:str) -> None:
         """
@@ -1090,22 +1166,16 @@ class ChessBoard:
 
         self.clear_board()
         self.load_position('config/initial_position.yaml')
-        self.history = history
-        self.pointer = (0, True)
-        
-        if go2last:
-            if len(history[-1][0]) == 1:
-                history[-1][0].append('quit')
-            for i, ((white_move, black_move), (white_fen, black_fen)) in enumerate(self.history):
-                piece, initial_position, end_position = self.read_move(white_move, True)
-                self.make_move(piece, initial_position, end_position)
-                self.white_turn = False
-                if black_move == 'quit':
-                    break
-                piece, initial_position, end_position = self.read_move(black_move, False)
-                self.make_move(piece, initial_position, end_position)
-                self.white_turn = True
-        self.bitboard = ChessBitboard(self.board)
+        self.history = history if history is not None else []
+        self.pointer = (-1, True)
+        self.last_turn = (None, None, None)
+        self._refresh_possible_moves()
+
+        if go2last and self.history:
+            last_turn_index = len(self.history) - 1
+            moves = self.history[last_turn_index][0]
+            white_player = len(moves) == 1
+            self.go2(last_turn_index, white_player)
 
     def fen2numpy(self, fen:str) -> np.array:
         """
@@ -1122,20 +1192,30 @@ class ChessBoard:
             'K': 6, 'Q': 5, 'R': 4, 'B': 3, 'N': 2, 'P': 1,
             'k': -6, 'q': -5, 'r': -4, 'b': -3, 'n': -2, 'p': -1
         }
-        
-        position = fen.split(' ')[0] #The first field is the position itself
-        
+        fields = fen.strip().split()
+        if not fields:
+            raise ValueError('FEN is empty')
+
+        position = fields[0]
+        rows = position.split('/')
+        if len(rows) != BOARD_SIZE:
+            raise ValueError('FEN must contain 8 ranks')
+
         board = []
-        for row in position.split('/'): #Rows are separated by /
+        for row in rows:
             current_row = []
             for char in row:
                 if char.isdigit():
-                    current_row.extend([0] * int(char)) #Digits are for empty squares
-                else:
+                    current_row.extend([0] * int(char))
+                elif char in mapping:
                     current_row.append(mapping[char])
+                else:
+                    raise ValueError(f'Invalid FEN character: {char}')
+            if len(current_row) != BOARD_SIZE:
+                raise ValueError('Each FEN rank must contain 8 files')
             board.append(current_row)
         
-        return np.array(board)
+        return np.array(board, dtype=np.int64)
     
     def numpy2fen(self, board:np.array) -> str:
         """
@@ -1171,22 +1251,153 @@ class ChessBoard:
         
         return '/'.join(fen_rows) #Joins rows with a /
     
+    def _history_uses_pre_move_fens(self) -> bool:
+        """Return True for legacy games whose FENs describe positions before moves.
+
+        Early generated YAML games store, for each row, the position before White's
+        move and the position before Black's move. New games created by
+        ``make_move`` store the position after each half-move. Navigation must
+        support both contracts without rewriting the loaded file.
+        """
+        if not self.history:
+            return False
+
+        moves, fens = self._split_history_entry(self.history[0])
+        if not moves or not fens or not fens[0]:
+            return False
+
+        first_move = moves[0] if moves else ''
+        first_placement = str(fens[0]).split()[0]
+        return first_move != '...' and first_placement == STARTING_FEN_PLACEMENT
+
+    @staticmethod
+    def _split_history_entry(entry) -> Tuple[List[str], List[str]]:
+        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+            moves, fens = entry[0], entry[1]
+        else:
+            moves, fens = entry, []
+
+        if moves is None:
+            parsed_moves = []
+        elif isinstance(moves, str):
+            parsed_moves = [moves]
+        else:
+            parsed_moves = list(moves)
+
+        if fens is None:
+            parsed_fens = []
+        elif isinstance(fens, str):
+            parsed_fens = [fens]
+        else:
+            parsed_fens = list(fens)
+
+        return parsed_moves, parsed_fens
+
+    def _set_board_from_history_fen(self, fen: str, white_turn: bool) -> None:
+        if not fen:
+            raise ValueError('Requested move does not have an associated FEN')
+
+        self.board = self.fen2numpy(fen)
+        self.white_turn = bool(white_turn)
+        self.possible_moves = self.calculate_possible_moves()
+        self._sync_bitboard()
+
+    def _resolve_pre_move_history_target(self, turn: int, white_player: bool) -> Tuple[Optional[str], bool]:
+        moves, fens = self._split_history_entry(self.history[turn])
+
+        if white_player:
+            if len(fens) >= 2 and fens[1]:
+                return fens[1], False
+            return None, False
+
+        next_turn = turn + 1
+        if next_turn < len(self.history):
+            _, next_fens = self._split_history_entry(self.history[next_turn])
+            if next_fens and next_fens[0]:
+                return next_fens[0], True
+
+        if len(fens) >= 2 and fens[1] and len(moves) >= 2:
+            return None, True
+
+        raise ValueError('Requested black move does not have enough history data')
+
+    @staticmethod
+    def _extract_promotion_from_history_move(move: str, white_player: bool) -> Tuple[str, Optional[str]]:
+        if '=' not in move:
+            return move, None
+
+        move_without_promotion, promotion_suffix = move.split('=', 1)
+        promotion_code = promotion_suffix.replace('+', '').replace('#', '')[:1]
+        promotion_map = {'Q': 'queen', 'R': 'rook', 'N': 'knight', 'B': 'bishop'}
+        promotion_piece = promotion_map.get(promotion_code)
+        if promotion_piece is None:
+            return move_without_promotion, None
+
+        color = 'white' if white_player else 'black'
+        return move_without_promotion, f'{color} {promotion_piece}'
+
+    def _replay_pre_move_history_target(self, turn: int, white_player: bool) -> None:
+        moves, fens = self._split_history_entry(self.history[turn])
+        move_index = 0 if white_player else 1
+        if len(moves) <= move_index:
+            raise ValueError('Requested move is missing from history')
+        if len(fens) <= move_index or not fens[move_index]:
+            raise ValueError('Requested move does not have a prior FEN to replay from')
+
+        move, promote2 = self._extract_promotion_from_history_move(moves[move_index], white_player)
+
+        replay_board = ChessBoard()
+        replay_board.set_position_from_fen(fens[move_index], clear_history=True)
+        replay_board.white_turn = white_player
+        replay_board.possible_moves = replay_board.calculate_possible_moves()
+
+        piece, origin, target = replay_board.read_move(move, white_player)
+        moved, _ = replay_board.make_move(piece, origin, target, promote2=promote2, add2history=False)
+        if not moved:
+            raise ValueError(f'Could not replay move from history: {moves[move_index]}')
+
+        self.board = replay_board.board.copy()
+        self.white_turn = replay_board.white_turn
+        self.possible_moves = self.calculate_possible_moves()
+        self._sync_bitboard()
+
     def go2(self, turn:int, white_player:bool) -> None:
         """
         Actualizes the position and pointer to fit the given number
 
         Parameters:
             turn: the position in the sequence of the target turn
-            white_player: True is the calculations are done for white's player turn
+            white_player: True if the target is White's move in the row,
+                False if the target is Black's move in the row.
         """
+        if turn < 0:
+            self.reset_to_initial_position(preserve_history=True)
+            return
+
+        if turn >= len(self.history):
+            raise IndexError('Requested turn is outside the loaded history')
+
+        if self._history_uses_pre_move_fens():
+            target_fen, target_white_turn = self._resolve_pre_move_history_target(turn, white_player)
+            if target_fen is not None:
+                self._set_board_from_history_fen(target_fen, target_white_turn)
+            else:
+                self._replay_pre_move_history_target(turn, white_player)
+            self.pointer = (turn, white_player)
+            return
+
         entry = self.history[turn]
-        moves, fens = entry
-        white_fen = fens[0]
-        black_fen = fens[1] if len(fens) > 1 else None
-        self.board = self.fen2numpy(white_fen) if white_player else self.fen2numpy(black_fen)
-        self.white_turn = white_player
-        self.possible_moves = self.calculate_possible_moves()
+        moves, fens = self._split_history_entry(entry)
+        del moves
+        white_fen = fens[0] if len(fens) >= 1 else None
+        black_fen = fens[1] if len(fens) >= 2 else None
+        target_fen = white_fen if white_player else black_fen
+        if target_fen is None:
+            raise ValueError('Requested move does not have an associated FEN')
+
+        self._set_board_from_history_fen(target_fen, not white_player)
         self.pointer = (turn, white_player)
+
 
 if __name__ == '__main__':
     board = ChessBoard()

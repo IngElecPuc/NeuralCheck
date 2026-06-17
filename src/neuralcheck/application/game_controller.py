@@ -9,23 +9,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Protocol, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Tuple
 
 from neuralcheck.logic import ChessBoard
 
 PromotionProvider = Callable[[], Optional[str]]
+MovePointer = Tuple[int, bool]
+NO_MOVE_POINTER: MovePointer = (-1, True)
 
 
 class ChessBoardLike(Protocol):
-    """Subset of ChessBoard used by the controller.
-
-    This protocol is deliberately small enough to test the controller without a
-    Tkinter root and without coupling UI code to every method in ``ChessBoard``.
-    """
+    """Subset of ChessBoard used by the controller."""
 
     white_turn: bool
     history: list
-    pointer: Tuple[int, bool]
+    pointer: MovePointer
     possible_moves: dict
 
     def what_in(self, position: str) -> str: ...
@@ -49,6 +47,21 @@ class ChessBoardLike(Protocol):
 
     def save_game(self, filename: str) -> None: ...
 
+    def set_position_from_pieces(
+        self,
+        pieces: Dict[str, str],
+        white_turn: bool = True,
+        clear_history: bool = True,
+    ) -> None: ...
+
+    def set_position_from_fen(self, fen: str, clear_history: bool = True) -> None: ...
+
+    def export_fen(self, include_state: bool = True) -> str: ...
+
+    def assess_ataqued_squares(self, white_player: bool) -> List[str]: ...
+
+    def search_for(self, piece: str) -> List[str]: ...
+
 
 @dataclass(frozen=True)
 class HistoryRow:
@@ -57,6 +70,7 @@ class HistoryRow:
     turn_number: int
     white_move: str
     black_move: str
+    turn_index: int
     white_pointer: bool = False
     black_pointer: bool = False
 
@@ -86,15 +100,38 @@ class ReplayMove:
     target: str
     promote_to: Optional[str]
     white_player: bool
+    pointer: MovePointer
+
+
+@dataclass(frozen=True)
+class PositionValidationResult:
+    """Validation result for a manually configured chess position."""
+
+    valid: bool
+    errors: Tuple[str, ...] = ()
+    warnings: Tuple[str, ...] = ()
 
 
 class GameController:
-    """Facade used by the desktop UI.
+    """Facade used by the desktop UI."""
 
-    The class follows a small Controller/Facade pattern: Tkinter translates user
-    events to board coordinates, then this object owns selection, movement,
-    history navigation and file persistence calls.
-    """
+    BOARD_FILES = "abcdefgh"
+    BOARD_RANKS = "12345678"
+    PIECE_OPTIONS = (
+        "Empty square",
+        "white king",
+        "white queen",
+        "white rook",
+        "white bishop",
+        "white knight",
+        "white pawn",
+        "black king",
+        "black queen",
+        "black rook",
+        "black bishop",
+        "black knight",
+        "black pawn",
+    )
 
     def __init__(self, board: Optional[ChessBoardLike] = None):
         self._board: ChessBoardLike = board if board is not None else ChessBoard()
@@ -122,6 +159,10 @@ class GameController:
         if self._selected_square is None or self._selected_piece is None:
             return None
         return self._selected_square, self._selected_piece
+
+    @property
+    def current_pointer(self) -> MovePointer:
+        return self._board.pointer
 
     def new_game(self) -> None:
         self._board = ChessBoard()
@@ -238,6 +279,106 @@ class GameController:
             target=position,
         )
 
+    def piece_options(self) -> Tuple[str, ...]:
+        return self.PIECE_OPTIONS
+
+    def board_pieces(self) -> Dict[str, str]:
+        pieces: Dict[str, str] = {}
+        for file_name in self.BOARD_FILES:
+            for rank in self.BOARD_RANKS:
+                position = f"{file_name}{rank}"
+                piece = self.piece_at(position)
+                if "Empty" not in piece:
+                    pieces[position] = piece
+        return pieces
+
+    def current_fen(self, include_state: bool = True) -> str:
+        return self._board.export_fen(include_state=include_state)
+
+    def apply_manual_position(self, pieces: Dict[str, str], white_turn: bool) -> PositionValidationResult:
+        validation = self.validate_manual_position(pieces, white_turn)
+        if not validation.valid:
+            return validation
+
+        clean_pieces = {
+            position: piece
+            for position, piece in pieces.items()
+            if piece != "Empty square"
+        }
+        self._board.set_position_from_pieces(clean_pieces, white_turn=white_turn, clear_history=True)
+        self.clear_selection()
+        return validation
+
+    def preview_fen_position(self, fen: str) -> Tuple[PositionValidationResult, Dict[str, str], bool]:
+        try:
+            candidate = ChessBoard()
+            candidate.set_position_from_fen(fen, clear_history=True)
+        except (KeyError, ValueError, IndexError) as exc:
+            return PositionValidationResult(False, (f"FEN inválido: {exc}",)), {}, True
+
+        pieces: Dict[str, str] = {}
+        for file_name in self.BOARD_FILES:
+            for rank in self.BOARD_RANKS:
+                position = f"{file_name}{rank}"
+                piece = candidate.what_in(position)
+                if "Empty" not in piece:
+                    pieces[position] = piece
+
+        validation = self.validate_manual_position(pieces, candidate.white_turn)
+        return validation, pieces, candidate.white_turn
+
+    def apply_fen_position(self, fen: str) -> PositionValidationResult:
+        validation, pieces, white_turn = self.preview_fen_position(fen)
+        if not validation.valid:
+            return validation
+
+        self._board.set_position_from_pieces(pieces, white_turn=white_turn, clear_history=True)
+        self.clear_selection()
+        return validation
+
+    def validate_manual_position(self, pieces: Dict[str, str], white_turn: bool) -> PositionValidationResult:
+        del white_turn  # Reserved for future checks that depend on side to move.
+        errors: List[str] = []
+        warnings: List[str] = []
+        clean_pieces: Dict[str, str] = {}
+
+        for position, piece in pieces.items():
+            if piece == "Empty square":
+                continue
+            if not self._is_valid_square(position):
+                errors.append(f"Casilla inválida: {position}")
+                continue
+            if piece not in self.PIECE_OPTIONS or piece == "Empty square":
+                errors.append(f"Pieza inválida en {position}: {piece}")
+                continue
+            if "pawn" in piece and position[1] in {"1", "8"}:
+                errors.append(f"Peón en fila de promoción sin promover: {position}")
+            clean_pieces[position] = piece
+
+        white_kings = [position for position, piece in clean_pieces.items() if piece == "white king"]
+        black_kings = [position for position, piece in clean_pieces.items() if piece == "black king"]
+        if len(white_kings) != 1:
+            errors.append("Debe existir exactamente un rey blanco")
+        if len(black_kings) != 1:
+            errors.append("Debe existir exactamente un rey negro")
+
+        if errors:
+            return PositionValidationResult(False, tuple(errors), tuple(warnings))
+
+        board = ChessBoard()
+        board.set_position_from_pieces(clean_pieces, white_turn=True, clear_history=True)
+        white_in_check = white_kings[0] in board.assess_ataqued_squares(False)
+        black_in_check = black_kings[0] in board.assess_ataqued_squares(True)
+        if white_in_check and black_in_check:
+            errors.append("La posición deja ambos reyes en jaque")
+
+        if not errors:
+            warnings.append(
+                "Los derechos de enroque y en passant aún no forman parte del contrato de posición manual"
+            )
+
+        return PositionValidationResult(not errors, tuple(errors), tuple(warnings))
+
     def load_game(self, filename: str | Path) -> None:
         self._board.load_game(str(filename))
         self.go_to_first()
@@ -259,6 +400,7 @@ class GameController:
                     turn_number=turn_index + 1,
                     white_move=white_move,
                     black_move=black_move,
+                    turn_index=turn_index,
                     white_pointer=(pointer_turn == turn_index and pointer_white),
                     black_pointer=(pointer_turn == turn_index and not pointer_white),
                 )
@@ -271,72 +413,52 @@ class GameController:
             self.clear_selection()
             return False
 
-        self._board.pointer = (0, True)
-        self._board.go2(0, True)
+        self._board.go2(*NO_MOVE_POINTER)
         self.clear_selection()
         return True
 
     def previous_step(self) -> bool:
-        turn, white_turn = self._board.pointer
-        if turn == 0 and white_turn:
+        previous_pointer = self._previous_pointer(self._board.pointer)
+        if previous_pointer is None:
             return False
 
-        if white_turn:
-            turn -= 1
-        white_turn = not white_turn
-        self._board.pointer = (turn, white_turn)
-        self._board.go2(turn, white_turn)
+        self._board.go2(*previous_pointer)
         self.clear_selection()
         return True
 
     def next_step(self) -> bool:
-        turn, white_turn = self._board.pointer
-        if turn == len(self._board.history) and white_turn:
+        next_pointer = self._next_pointer(self._board.pointer)
+        if next_pointer is None:
             return False
 
-        if white_turn:
-            if turn >= len(self._board.history):
-                return False
-            moves = self._extract_moves(self._board.history[turn])
-            if len(moves) == 1:
-                return False
-            white_turn = False
-        else:
-            turn += 1
-            white_turn = True
-
-        self._board.pointer = (turn, white_turn)
-        self._board.go2(turn, white_turn)
+        self._board.go2(*next_pointer)
         self.clear_selection()
         return True
 
     def go_to_last(self) -> bool:
-        total_turns = len(self._board.history)
-        if total_turns == 0:
+        last_pointer = self._last_pointer()
+        if last_pointer is None:
             return False
 
-        last_turn_index = total_turns - 1
-        moves = self._extract_moves(self._board.history[last_turn_index])
-        white_pointer = len(moves) == 1
-        self._board.pointer = (last_turn_index, white_pointer)
-        self._board.go2(last_turn_index, white_pointer)
+        self._board.go2(*last_pointer)
+        self.clear_selection()
+        return True
+
+    def jump_to_move(self, turn_index: int, white_player: bool) -> bool:
+        if not self._pointer_exists((turn_index, white_player)):
+            return False
+
+        self._board.go2(turn_index, white_player)
         self.clear_selection()
         return True
 
     def current_replay_move(self) -> Optional[ReplayMove]:
-        if not self._board.history:
+        next_pointer = self._next_pointer(self._board.pointer)
+        if next_pointer is None:
             return None
 
-        turn, white_player = self._board.pointer
-        if turn >= len(self._board.history):
-            return None
-
+        turn, white_player = next_pointer
         moves = self._extract_moves(self._board.history[turn])
-        if white_player and len(moves) == 1:
-            return None
-        if not white_player and len(moves) < 2:
-            return None
-
         move = moves[0] if white_player else moves[1]
         move_without_promotion, promote_to = self._extract_promotion(move, white_player)
         piece, origin, target = self._board.read_move(move_without_promotion, white_player)
@@ -347,6 +469,7 @@ class GameController:
             target=target,
             promote_to=promote_to,
             white_player=white_player,
+            pointer=next_pointer,
         )
 
     def execute_current_replay_move(self) -> MoveAttempt:
@@ -373,6 +496,7 @@ class GameController:
                 legal_targets=legal_targets,
             )
 
+        self._board.pointer = replay_move.pointer
         return MoveAttempt(
             moved=True,
             movement=movement,
@@ -397,6 +521,71 @@ class GameController:
         if self._board.white_turn:
             return target_position.endswith("8")
         return target_position.endswith("1")
+
+    def _pointer_exists(self, pointer: MovePointer) -> bool:
+        turn, white_player = pointer
+        if turn < 0:
+            return True
+        if turn >= len(self._board.history):
+            return False
+        moves = self._extract_moves(self._board.history[turn])
+        return len(moves) >= (1 if white_player else 2)
+
+    def _next_pointer(self, pointer: MovePointer) -> Optional[MovePointer]:
+        if not self._board.history:
+            return None
+
+        turn, white_player = pointer
+        if turn < 0:
+            return (0, True) if self._pointer_exists((0, True)) else None
+
+        if white_player:
+            if self._pointer_exists((turn, False)):
+                return (turn, False)
+            next_turn = turn + 1
+            return (next_turn, True) if self._pointer_exists((next_turn, True)) else None
+
+        next_turn = turn + 1
+        return (next_turn, True) if self._pointer_exists((next_turn, True)) else None
+
+    def _previous_pointer(self, pointer: MovePointer) -> Optional[MovePointer]:
+        turn, white_player = pointer
+        if turn < 0:
+            return None
+
+        if not white_player:
+            return (turn, True) if self._pointer_exists((turn, True)) else NO_MOVE_POINTER
+
+        if turn == 0:
+            return NO_MOVE_POINTER
+
+        previous_turn = turn - 1
+        if self._pointer_exists((previous_turn, False)):
+            return (previous_turn, False)
+        if self._pointer_exists((previous_turn, True)):
+            return (previous_turn, True)
+        return NO_MOVE_POINTER
+
+    def _last_pointer(self) -> Optional[MovePointer]:
+        if not self._board.history:
+            return None
+
+        last_turn_index = len(self._board.history) - 1
+        moves = self._extract_moves(self._board.history[last_turn_index])
+        if len(moves) >= 2:
+            return last_turn_index, False
+        if len(moves) == 1:
+            return last_turn_index, True
+        return None
+
+    @classmethod
+    def _is_valid_square(cls, position: str) -> bool:
+        return (
+            isinstance(position, str)
+            and len(position) == 2
+            and position[0] in cls.BOARD_FILES
+            and position[1] in cls.BOARD_RANKS
+        )
 
     @staticmethod
     def _extract_moves(entry) -> List[str]:
