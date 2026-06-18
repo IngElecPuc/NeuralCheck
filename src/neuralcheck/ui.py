@@ -56,6 +56,7 @@ class ChessUI:
         self.clock_start_policy_var = tk.StringVar(master, value=self.clock.start_policy)
         self.coordinates = True
         self.coordinates_var = tk.BooleanVar(master, value=True)
+        self.board_view_var = tk.StringVar(master, value="black" if self.rotation else "white")
         self.theory_navigation_mode_var = tk.StringVar(master, value=NAVIGATION_FIXED)
 
         master.rowconfigure(0, weight=1)
@@ -111,6 +112,10 @@ class ChessUI:
         board_menu = tk.Menu(settings_menu, tearoff=0)
         settings_menu.add_cascade(label="Tablero", menu=board_menu)
         self._build_board_menu(board_menu)
+
+        view_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Vista", menu=view_menu)
+        self._build_view_menu(view_menu)
 
         theory_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Teoría", menu=theory_menu)
@@ -175,6 +180,20 @@ class ChessUI:
             label="Mostrar coordenadas",
             variable=self.coordinates_var,
             command=self.toggle_coordinates,
+        )
+
+    def _build_view_menu(self, view_menu: tk.Menu) -> None:
+        view_menu.add_radiobutton(
+            label="Vista blancas",
+            variable=self.board_view_var,
+            value="white",
+            command=lambda: self.set_board_view("white"),
+        )
+        view_menu.add_radiobutton(
+            label="Vista negras",
+            variable=self.board_view_var,
+            value="black",
+            command=lambda: self.set_board_view("black"),
         )
 
     def _build_layout(self, master) -> None:
@@ -622,6 +641,7 @@ class ChessUI:
     def open_theory_panel(self) -> None:
         self.set_correspondence_clock()
         if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.set_board_rotation(self.rotation)
             self.theory_window.focus()
             self.show_theory_board_controls()
             return
@@ -634,6 +654,7 @@ class ChessUI:
             on_move_draft_changed=self.refresh_theory_board_controls,
             preview_piece_images=self.preview_pieces,
             navigation_mode_var=self.theory_navigation_mode_var,
+            board_rotation=self.rotation,
         )
         self.show_theory_board_controls()
 
@@ -698,6 +719,16 @@ class ChessUI:
 
     def _theory_has_active_move_draft(self) -> bool:
         return self.theory_window is not None and self.theory_window.exists() and self.theory_window.has_active_move_draft()
+
+    def set_board_view(self, view: str) -> None:
+        self.rotation = view == "black"
+        self.board_view_var.set("black" if self.rotation else "white")
+        self.cols_str = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        if self.rotation:
+            self.cols_str = self.cols_str[::-1]
+        if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.set_board_rotation(self.rotation)
+        self.refresh_board()
 
     def toggle_coordinates(self) -> None:
         self.coordinates = bool(self.coordinates_var.get())

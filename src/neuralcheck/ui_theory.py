@@ -23,6 +23,7 @@ class TheoryWindow:
         on_move_draft_changed: Optional[Callable[[], None]] = None,
         preview_piece_images: Optional[Mapping[str, tk.PhotoImage]] = None,
         navigation_mode_var: Optional[tk.StringVar] = None,
+        board_rotation: bool = False,
     ):
         self.master = master
         self.controller = controller
@@ -30,6 +31,7 @@ class TheoryWindow:
         self.on_close = on_close
         self.on_move_draft_changed = on_move_draft_changed
         self.preview_piece_images = dict(preview_piece_images or {})
+        self.board_rotation = bool(board_rotation)
         self.navigation_mode_var = navigation_mode_var or tk.StringVar(master, value="fixed")
         self.book_index: Dict[int, str] = {}
 
@@ -224,6 +226,7 @@ class TheoryWindow:
             on_next_sibling_requested=lambda: self._navigate_sibling(1),
             on_load_selected_requested=self.load_selected_node_to_board,
             preview_piece_images=self.preview_piece_images,
+            board_rotation=self.board_rotation,
         )
         self.theory_map.grid(row=0, column=0, sticky="nsew")
 
@@ -241,6 +244,11 @@ class TheoryWindow:
         self.navigation_mode_var.set(mode)
         if hasattr(self, "theory_map"):
             self.theory_map.set_navigation_mode(mode)
+
+    def set_board_rotation(self, rotation: bool) -> None:
+        self.board_rotation = bool(rotation)
+        if hasattr(self, "theory_map"):
+            self.theory_map.set_board_rotation(self.board_rotation)
 
     def refresh_all(self) -> None:
         self.refresh_books()

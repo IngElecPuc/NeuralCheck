@@ -370,6 +370,7 @@ class TheoryMapCanvas(tk.Frame):
         height: int = 430,
         allow_fullscreen: bool = True,
         preview_piece_images: Optional[Mapping[str, tk.PhotoImage]] = None,
+        board_rotation: bool = False,
     ):
         super().__init__(master)
         self.controller = controller
@@ -381,6 +382,7 @@ class TheoryMapCanvas(tk.Frame):
         self.on_next_sibling_requested = on_next_sibling_requested
         self.on_load_selected_requested = on_load_selected_requested
         self.preview_piece_images = dict(preview_piece_images or {})
+        self.board_rotation = bool(board_rotation)
         self.forward_depth = 4
         self.backward_depth = 2
         self.zoom = 1.0
@@ -410,11 +412,14 @@ class TheoryMapCanvas(tk.Frame):
 
         controls = tk.Frame(self)
         controls.grid(row=0, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
+        controls.columnconfigure(0, weight=1)
 
-        tk.Label(controls, text="Atrás:").grid(row=0, column=0, sticky="w", padx=2)
+        depth_controls = tk.Frame(controls)
+        depth_controls.grid(row=0, column=0, sticky="w")
+        tk.Label(depth_controls, text="Atrás:").grid(row=0, column=0, sticky="w", padx=2)
         self.backward_depth_var = tk.IntVar(value=self.backward_depth)
         self.backward_spinbox = tk.Spinbox(
-            controls,
+            depth_controls,
             from_=0,
             to=50,
             width=3,
@@ -423,10 +428,10 @@ class TheoryMapCanvas(tk.Frame):
         )
         self.backward_spinbox.grid(row=0, column=1, sticky="w", padx=2)
 
-        tk.Label(controls, text="Adelante:").grid(row=0, column=2, sticky="w", padx=2)
+        tk.Label(depth_controls, text="Adelante:").grid(row=0, column=2, sticky="w", padx=2)
         self.forward_depth_var = tk.IntVar(value=self.forward_depth)
         self.forward_spinbox = tk.Spinbox(
-            controls,
+            depth_controls,
             from_=1,
             to=50,
             width=3,
@@ -434,35 +439,40 @@ class TheoryMapCanvas(tk.Frame):
             command=self._on_depth_change,
         )
         self.forward_spinbox.grid(row=0, column=3, sticky="w", padx=2)
+        tk.Button(depth_controls, text="Aplicar", command=self._on_depth_change).grid(row=0, column=4, padx=2)
 
-        tk.Button(controls, text="Aplicar", command=self._on_depth_change).grid(row=0, column=4, padx=2)
-        tk.Button(controls, text="Zoom +", command=self.zoom_in).grid(row=0, column=5, padx=2)
-        tk.Button(controls, text="Zoom -", command=self.zoom_out).grid(row=0, column=6, padx=2)
-        tk.Button(controls, text="Ajustar a vista", command=self.fit_to_view).grid(row=0, column=7, padx=2)
-        tk.Button(controls, text="Centrar", command=self.center_selected).grid(row=0, column=8, padx=2)
-        tk.Button(controls, text="↺", command=lambda: self.rotate_by(-math.radians(15))).grid(row=1, column=0, padx=2, pady=(2, 0))
-        tk.Button(controls, text="↻", command=lambda: self.rotate_by(math.radians(15))).grid(row=1, column=1, padx=2, pady=(2, 0))
-        tk.Button(controls, text="Recalcular", command=lambda: self.refresh(force_layout=True)).grid(row=1, column=2, padx=2, pady=(2, 0))
+        view_controls = tk.Frame(controls)
+        view_controls.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        tk.Button(view_controls, text="Zoom +", command=self.zoom_in).grid(row=0, column=0, padx=2)
+        tk.Button(view_controls, text="Zoom -", command=self.zoom_out).grid(row=0, column=1, padx=2)
+        tk.Button(view_controls, text="Ajustar a vista", command=self.fit_to_view).grid(row=0, column=2, padx=2)
+        tk.Button(view_controls, text="Centrar", command=self.center_selected).grid(row=0, column=3, padx=2)
+        tk.Button(view_controls, text="↺", command=lambda: self.rotate_by(-math.radians(15))).grid(row=0, column=4, padx=2)
+        tk.Button(view_controls, text="↻", command=lambda: self.rotate_by(math.radians(15))).grid(row=0, column=5, padx=2)
+
+        layout_controls = tk.Frame(controls)
+        layout_controls.grid(row=2, column=0, sticky="w", pady=(2, 0))
+        tk.Button(layout_controls, text="Recalcular", command=lambda: self.refresh(force_layout=True)).grid(row=0, column=0, padx=2)
         self.auto_layout_check = tk.Checkbutton(
-            controls,
+            layout_controls,
             text="Autoordenar",
             variable=self.auto_layout_var,
             command=self._on_auto_layout_change,
         )
-        self.auto_layout_check.grid(row=1, column=3, padx=2, pady=(2, 0))
+        self.auto_layout_check.grid(row=0, column=1, padx=2)
         self.auto_center_check = tk.Checkbutton(
-            controls,
+            layout_controls,
             text="Autocentrar",
             variable=self.auto_center_var,
             command=lambda: self.refresh(force_layout=self.auto_layout_var.get()),
         )
-        self.auto_center_check.grid(row=1, column=4, padx=2, pady=(2, 0))
-        tk.Button(controls, text="Restablecer", command=self.reset_view).grid(row=1, column=5, padx=2, pady=(2, 0))
+        self.auto_center_check.grid(row=0, column=2, padx=2)
+        tk.Button(layout_controls, text="Restablecer", command=self.reset_view).grid(row=0, column=3, padx=2)
         if self._allow_fullscreen:
-            tk.Button(controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=1, column=6, padx=2, pady=(2, 0))
+            tk.Button(layout_controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=0, column=4, padx=2)
 
         self.mode_label_var = tk.StringVar(value="Modo: vista fija")
-        tk.Label(controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=1, column=7, columnspan=3, padx=(8, 2), sticky="w")
+        tk.Label(layout_controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=0, column=5, padx=(8, 2), sticky="w")
 
         self.deep_graph_warning_var = tk.StringVar(value="")
         self.deep_graph_warning_label = tk.Label(
@@ -562,6 +572,23 @@ class TheoryMapCanvas(tk.Frame):
             self.auto_layout_var.set(True)
             self.auto_center_var.set(True)
         self._sync_auto_center_availability()
+
+    def set_board_rotation(self, rotation: bool) -> None:
+        self.board_rotation = bool(rotation)
+
+    def _base_node_radius(self) -> float:
+        return 38.0
+
+    def _zoom_value(self) -> float:
+        return max(self.zoom, 0.001)
+
+    def _to_screen(self, x: float, y: float) -> Tuple[float, float]:
+        zoom = self._zoom_value()
+        return x * zoom, y * zoom
+
+    def _to_world(self, x: float, y: float) -> Tuple[float, float]:
+        zoom = self._zoom_value()
+        return x / zoom, y / zoom
 
     def _on_auto_layout_change(self) -> None:
         if not self.auto_layout_var.get():
@@ -670,12 +697,13 @@ class TheoryMapCanvas(tk.Frame):
         canvas_height = max(self.canvas.winfo_height(), 1)
         graph_width = max(float(bbox[2] - bbox[0]), 1.0)
         graph_height = max(float(bbox[3] - bbox[1]), 1.0)
+        center_world = self._to_world((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
         scale = min(canvas_width * 0.86 / graph_width, canvas_height * 0.86 / graph_height)
         if scale <= 0:
             return
         self._set_zoom(self.zoom * scale, refresh=False)
-        self.refresh(force_layout=True)
-        self.center_selected()
+        self.refresh(force_layout=False)
+        self._center_canvas_on(*center_world)
 
     def center_selected(self) -> None:
         selected_id = self.controller.selected_node_id
@@ -712,6 +740,7 @@ class TheoryMapCanvas(tk.Frame):
             on_load_selected_requested=self.on_load_selected_requested,
             allow_fullscreen=False,
             preview_piece_images=self.preview_piece_images,
+            board_rotation=self.board_rotation,
         )
         fullscreen_map.zoom = self.zoom
         fullscreen_map.rotation_radians = self.rotation_radians
@@ -759,17 +788,18 @@ class TheoryMapCanvas(tk.Frame):
             self.canvas.configure(scrollregion=(0, 0, width, height))
             return
 
+        node_radius_world = self._base_node_radius()
         node_radius = self._node_radius()
         if reuse_layout and self._cached_layout is not None and self._layout_matches_view(self._cached_layout, view):
             layout = self._with_current_layout_selection(self._cached_layout, view.selected_node_id)
         else:
             center = self._current_view_center(width, height)
             engine = TheoryMapLayoutEngine(
-                node_radius=node_radius,
-                forward_step=max(node_radius * 3.2, 150.0 * self.zoom),
-                backward_step=max(node_radius * 3.0, 135.0 * self.zoom),
+                node_radius=node_radius_world,
+                forward_step=max(node_radius_world * 3.2, 150.0),
+                backward_step=max(node_radius_world * 3.0, 135.0),
                 rotation_radians=self.rotation_radians,
-                min_margin=max(22.0, 30.0 * self.zoom),
+                min_margin=30.0,
             )
             layout = engine.layout(view, selected_node_id=view.selected_node_id, center=center)
             self._cached_layout = layout
@@ -819,7 +849,7 @@ class TheoryMapCanvas(tk.Frame):
         return GraphLayout(nodes=layout.nodes, center_node_id=selected_node_id)
 
     def _node_radius(self) -> float:
-        return max(24.0, 38.0 * self.zoom)
+        return max(14.0, self._base_node_radius() * self._zoom_value())
 
     def _add_legend_item(self, label: str, fill: str, outline: str) -> None:
         swatch = tk.Canvas(self.legend_frame, width=14, height=14, highlightthickness=0)
@@ -882,7 +912,7 @@ class TheoryMapCanvas(tk.Frame):
     def _current_view_center(self, width: int, height: int) -> Tuple[float, float]:
         left = self.canvas.canvasx(0)
         top = self.canvas.canvasy(0)
-        return (left + width / 2, top + height / 2)
+        return self._to_world(left + width / 2, top + height / 2)
 
     def _draw_edge(
         self,
@@ -891,8 +921,8 @@ class TheoryMapCanvas(tk.Frame):
         move_san: str,
         node_radius: float,
     ) -> None:
-        x1, y1 = source
-        x2, y2 = target
+        x1, y1 = self._to_screen(source[0], source[1])
+        x2, y2 = self._to_screen(target[0], target[1])
         dx = x2 - x1
         dy = y2 - y1
         length = max(math.hypot(dx, dy), 1.0)
@@ -918,6 +948,7 @@ class TheoryMapCanvas(tk.Frame):
         )
 
     def _draw_node(self, node: TheoryMapNode, x: float, y: float) -> None:
+        x, y = self._to_screen(x, y)
         radius = self._node_radius()
         role = self.node_roles.get(node.id, "context")
         fill, outline, border_width = self._node_style(role, node.is_selected)
@@ -988,6 +1019,7 @@ class TheoryMapCanvas(tk.Frame):
         )
 
     def _center_canvas_on(self, x: float, y: float) -> None:
+        screen_x, screen_y = self._to_screen(x, y)
         bbox = self.canvas.cget("scrollregion")
         if not bbox:
             return
@@ -996,17 +1028,20 @@ class TheoryMapCanvas(tk.Frame):
         region_height = max(bottom - top, 1.0)
         canvas_width = max(self.canvas.winfo_width(), 1)
         canvas_height = max(self.canvas.winfo_height(), 1)
-        x_fraction = (x - left - canvas_width / 2) / max(region_width - canvas_width, 1.0)
-        y_fraction = (y - top - canvas_height / 2) / max(region_height - canvas_height, 1.0)
+        x_fraction = (screen_x - left - canvas_width / 2) / max(region_width - canvas_width, 1.0)
+        y_fraction = (screen_y - top - canvas_height / 2) / max(region_height - canvas_height, 1.0)
         self.canvas.xview_moveto(max(0.0, min(1.0, x_fraction)))
         self.canvas.yview_moveto(max(0.0, min(1.0, y_fraction)))
 
     def _set_zoom(self, value: float, refresh: bool = True) -> None:
+        anchor_world = self._current_view_center(max(self.canvas.winfo_width(), 1), max(self.canvas.winfo_height(), 1))
         self.zoom = max(0.15, min(4.5, value))
         if refresh:
             self.refresh(force_layout=False)
             if self._navigation_mode() == NAVIGATION_CONTEXTUAL or self.auto_center_var.get():
                 self.center_selected()
+            else:
+                self._center_canvas_on(*anchor_world)
 
     def _bind_mouse_controls(self) -> None:
         self.canvas.bind("<ButtonPress>", lambda event: self.activate_keyboard_focus(), add="+")
@@ -1159,8 +1194,7 @@ class TheoryMapCanvas(tk.Frame):
         if self._subtree_rotate_center is None:
             self._subtree_rotate_ids = set()
             return "break"
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._to_world(self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         cx, cy = self._subtree_rotate_center
         self._subtree_rotate_previous_angle = math.atan2(canvas_y - cy, canvas_x - cx)
         return "break"
@@ -1169,8 +1203,8 @@ class TheoryMapCanvas(tk.Frame):
         if self._node_drag_id is None or self._node_drag_previous is None:
             return
         previous_x, previous_y = self._node_drag_previous
-        dx = self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)
-        dy = self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)
+        dx = (self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)) / self._zoom_value()
+        dy = (self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)) / self._zoom_value()
         self._move_visible_nodes({self._node_drag_id}, dx, dy)
         self._node_drag_previous = (event.x, event.y)
 
@@ -1178,16 +1212,15 @@ class TheoryMapCanvas(tk.Frame):
         if not self._subtree_drag_ids or self._node_drag_previous is None:
             return
         previous_x, previous_y = self._node_drag_previous
-        dx = self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)
-        dy = self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)
+        dx = (self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)) / self._zoom_value()
+        dy = (self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)) / self._zoom_value()
         self._move_visible_nodes(self._subtree_drag_ids, dx, dy)
         self._node_drag_previous = (event.x, event.y)
 
     def _rotate_subtree_to(self, event: tk.Event) -> None:
         if not self._subtree_rotate_ids or self._subtree_rotate_center is None:
             return
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._to_world(self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         cx, cy = self._subtree_rotate_center
         angle = math.atan2(canvas_y - cy, canvas_x - cx)
         if self._subtree_rotate_previous_angle is None:
@@ -1296,24 +1329,38 @@ class TheoryMapCanvas(tk.Frame):
         colors = ("#f0d9b5", "#b58863")
         if len(rows) != 8:
             return
-        for row_index in range(8):
-            col_index = 0
-            for token in rows[row_index]:
+
+        board_tokens: list[list[Optional[str]]] = [[None for _ in range(8)] for _ in range(8)]
+        for fen_row_index, row_value in enumerate(rows):
+            fen_col_index = 0
+            for token in row_value:
                 if token.isdigit():
-                    for _ in range(int(token)):
-                        TheoryMapCanvas._draw_preview_square(canvas, row_index, col_index, cell_size, colors)
-                        col_index += 1
+                    fen_col_index += int(token)
                     continue
-                TheoryMapCanvas._draw_preview_square(canvas, row_index, col_index, cell_size, colors)
-                cx = col_index * cell_size + cell_size / 2
-                cy = row_index * cell_size + cell_size / 2
+                if 0 <= fen_col_index < 8:
+                    board_tokens[fen_row_index][fen_col_index] = token
+                fen_col_index += 1
+
+        for display_row in range(8):
+            for display_col in range(8):
+                if self.board_rotation:
+                    fen_row = 7 - display_row
+                    fen_col = 7 - display_col
+                else:
+                    fen_row = display_row
+                    fen_col = display_col
+                token = board_tokens[fen_row][fen_col]
+                TheoryMapCanvas._draw_preview_square(canvas, display_row, display_col, cell_size, colors)
+                if token is None:
+                    continue
+                cx = display_col * cell_size + cell_size / 2
+                cy = display_row * cell_size + cell_size / 2
                 piece_key = self._piece_key_from_fen_token(token)
                 piece_image = self.preview_piece_images.get(piece_key)
                 if piece_image is not None:
                     canvas.create_image(cx, cy, image=piece_image, anchor="center")
                 else:
                     self._draw_preview_piece_fallback(canvas, token, cx, cy)
-                col_index += 1
 
     @staticmethod
     def _piece_key_from_fen_token(token: str) -> str:
