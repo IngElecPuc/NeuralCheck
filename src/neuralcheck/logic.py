@@ -997,29 +997,59 @@ class ChessBoard:
         return candidates
 
     def _resolve_candidate_disambiguation(self, piece: str, play_stripped: str, candidates: List[str]) -> str:
-        """
-        In case there is more than one candidate for the starting position, 
-        a disambiguation logic is applied: for pawns, the origin column is used, 
-        and for other pieces, the piece information (e.g., its notation) is used.
+        """Resolve SAN disambiguation against legal candidate origins.
 
-        Parameters:
-            piece: A string representing the type of piece, e.g., 'knight', 'queen'
-            play_stripped: A chess like play, e.g., 'Nf3' but withouth '+' or '#'
-            candidates: a list of candidate pieces
-
-        Returns:
-            str: piece name 
+        SAN can identify the moving piece by file (``Ngf6``), rank
+        (``N5f7``) or full square (``Nbd2`` / ``R1e1``). The previous
+        implementation ignored that qualifier for non-pawns and could choose
+        the wrong knight/rook when two identical pieces could reach the same
+        square.
         """
+        if not candidates:
+            raise ValueError(f"No legal candidate found for move: {play_stripped}")
+
+        qualifier = self._san_origin_qualifier(piece, play_stripped)
+        if qualifier:
+            filtered = [candidate for candidate in candidates if self._candidate_matches_qualifier(candidate, qualifier)]
+            if len(filtered) == 1:
+                return filtered[0]
+            if filtered:
+                candidates = filtered
+            else:
+                raise ValueError(
+                    f"No legal candidate matches disambiguation {qualifier!r} for move: {play_stripped}"
+                )
+
         if len(candidates) == 1:
             return candidates[0]
-        else:
-            if 'pawn' in piece: #Find the candidate that matches the column indicated in the notation
-                for candidate in candidates:
-                    if candidate[0] == play_stripped[0]:
-                        return candidate
-            else: #Attempt to disambiguate using the full description of the piece
-                candidates_dict = {self.what_in(position): position for position in candidates}
-                return candidates_dict.get(piece, candidates[0])
+
+        raise ValueError(f"Ambiguous move without enough disambiguation: {play_stripped}")
+
+    def _san_origin_qualifier(self, piece: str, play_stripped: str) -> str:
+        """Return the SAN origin qualifier between piece/capture and target.
+
+        Examples:
+            ``Ngf6`` -> ``g``
+            ``N5f7`` -> ``5``
+            ``Nbd2`` -> ``b``
+            ``exd5`` -> ``e``
+            ``Nf3`` -> ````
+        """
+        core = play_stripped.replace("x", "")
+        if len(core) < 2:
+            return ""
+        before_target = core[:-2]
+        if "pawn" not in piece and before_target[:1] in {"K", "Q", "R", "B", "N"}:
+            before_target = before_target[1:]
+        return before_target
+
+    @staticmethod
+    def _candidate_matches_qualifier(candidate: str, qualifier: str) -> bool:
+        if len(qualifier) == 2:
+            return candidate == qualifier
+        if len(qualifier) == 1:
+            return candidate[0] == qualifier or candidate[1] == qualifier
+        return False
 
     def set_position_from_pieces(
         self,

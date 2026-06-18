@@ -319,3 +319,110 @@ def test_theory_node_layout_positions_are_persisted(tmp_path: Path):
         assert layouts[child.node.id] == (300.0, 350.0)
     finally:
         theory_controller.close()
+
+
+def test_move_visual_hint_detects_simple_move_and_capture():
+    from neuralcheck.theory.move_visuals import detect_move_visual_hint
+
+    parent = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1"
+    child = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b - - 0 1"
+    hint = detect_move_visual_hint(parent, child)
+    assert hint.from_square == "e2"
+    assert hint.to_square == "e4"
+
+    parent_capture = "8/8/8/3p4/4P3/8/8/8 w - - 0 1"
+    child_capture = "8/8/8/3P4/8/8/8/8 b - - 0 1"
+    capture_hint = detect_move_visual_hint(parent_capture, child_capture)
+    assert capture_hint.from_square == "e4"
+    assert capture_hint.to_square == "d5"
+
+
+def test_move_visual_hint_uses_king_move_for_castling():
+    from neuralcheck.theory.move_visuals import detect_move_visual_hint
+
+    parent = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"
+    child = "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1"
+    hint = detect_move_visual_hint(parent, child)
+    assert hint.from_square == "e1"
+    assert hint.to_square == "g1"
+
+
+def test_theory_controller_reports_direct_continuation_hints(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        book = theory_controller.create_book("Flechas")
+        root = theory_controller.create_root_from_current_position(book.id, name="Base")
+        e4 = theory_controller.add_child_by_move(root.id, "e4", name="Peón rey")
+        theory_controller.select_node(root.id)
+
+        hints = theory_controller.continuation_move_hints()
+        assert len(hints) == 1
+        child_id, move_san, hint = hints[0]
+        assert child_id == e4.node.id
+        assert move_san == "e4"
+        assert hint.from_square == "e2"
+        assert hint.to_square == "e4"
+    finally:
+        theory_controller.close()
+
+
+def test_map_role_classification_is_strict_one_hop():
+    from neuralcheck.theory.models import TheoryMapEdge, TheoryMapNode, TheoryMapView
+    from neuralcheck.ui_theory_map import TheoryMapCanvas
+
+    fen = "8/8/8/8/8/8/8/8 w - - 0 1"
+    nodes = (
+        TheoryMapNode("parent", "parent", fen, "white", None, -1, False),
+        TheoryMapNode("selected", "selected", fen, "black", None, 0, True),
+        TheoryMapNode("child", "child", fen, "white", None, 1, False),
+        TheoryMapNode("sibling", "sibling", fen, "black", None, 0, False),
+        TheoryMapNode("cousin", "cousin", fen, "white", None, 1, False),
+    )
+    edges = (
+        TheoryMapEdge("parent", "selected", "e4"),
+        TheoryMapEdge("selected", "child", "e5"),
+        TheoryMapEdge("parent", "sibling", "c5"),
+        TheoryMapEdge("sibling", "cousin", "Nf3"),
+    )
+    roles = TheoryMapCanvas._classify_node_roles(TheoryMapView("selected", "selected", nodes, edges, 2))
+    assert roles["selected"] == "selected"
+    assert roles["parent"] == "ancestor"
+    assert roles["child"] == "descendant"
+    assert roles["sibling"] == "sibling"
+    assert roles.get("cousin") is None
+
+
+def test_theory_board_draft_accepts_ambiguous_knight_move_from_board(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        karpov_fen = "r1bqkbnr/pp1npppp/2p5/8/3PN3/8/PPP2PPP/R1BQKBNR w - - 0 1"
+        after_nfg_fen = "r1bqkb1r/pp1npppp/2p2n2/8/3PN3/5N2/PPP2PPP/R1BQKB1R w - - 0 1"
+
+        book = theory_controller.create_book("Karpov")
+        game_controller.apply_fen_position(karpov_fen)
+        root = theory_controller.create_root_from_current_position(book.id, name="Karpov")
+        theory_controller.load_node_to_board(root.id)
+
+        game_controller.click_square("g1")
+        white_move = game_controller.click_square("f3")
+        assert white_move.movement == "Nf3"
+        theory_controller.create_move_draft_from_board_move(white_move.movement)
+        nf3 = theory_controller.commit_move_draft(name="Nf3")
+
+        game_controller.click_square("g8")
+        black_move = game_controller.click_square("f6")
+        assert black_move.movement == "Ngf6"
+        draft = theory_controller.create_move_draft_from_board_move(black_move.movement)
+        assert draft.parent_node_id == nf3.node.id
+        assert draft.move_san == "Ngf6"
+        assert draft.board_after_fen == after_nfg_fen
+    finally:
+        theory_controller.close()

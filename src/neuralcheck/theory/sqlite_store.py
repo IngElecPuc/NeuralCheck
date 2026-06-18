@@ -389,7 +389,7 @@ class SQLiteTheoryGraphStore:
             FROM theory_edges e
             JOIN theory_nodes n ON n.id = e.child_node_id
             WHERE e.parent_node_id = ?
-            ORDER BY e.created_at, lower(e.move_san)
+            ORDER BY lower(e.move_san), e.created_at
             """,
             (node_id,),
         ).fetchall()

@@ -129,3 +129,30 @@ def test_promotion_is_mandatory_and_validates_piece_color():
     assert board.make_move("white pawn", "a7", "a8", promote2="black queen") == (False, "")
     assert board.make_move("white pawn", "a7", "a8", promote2="white queen") == (True, "a8=Q+")
     assert board.what_in("a8") == "white queen"
+
+
+def test_san_disambiguation_reads_origin_file_for_ambiguous_knights():
+    board = ChessBoard()
+    board.set_position_from_fen(
+        "r1bqkbnr/pp1npppp/2p5/8/3PN3/5N2/PPP2PPP/R1BQKB1R b - - 0 1",
+        clear_history=True,
+    )
+
+    assert board.notation_from_move("black knight", "g8", "f6") == "Ngf6"
+    assert board.read_move("Ngf6", white_player=False) == ("black knight", "g8", "f6")
+    assert board.read_move("Ndf6", white_player=False) == ("black knight", "d7", "f6")
+
+
+def test_san_disambiguation_rejects_wrong_origin_file_for_ambiguous_knights():
+    board = ChessBoard()
+    board.set_position_from_fen(
+        "r1bqkbnr/pp1npppp/2p5/8/3PN3/5N2/PPP2PPP/R1BQKB1R b - - 0 1",
+        clear_history=True,
+    )
+
+    try:
+        board.read_move("Ncf6", white_player=False)
+    except ValueError as exc:
+        assert "disambiguation" in str(exc)
+    else:
+        raise AssertionError("Ncf6 should not resolve when no knight on c-file can move to f6")

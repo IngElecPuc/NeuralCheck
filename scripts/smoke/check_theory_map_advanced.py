@@ -4,7 +4,8 @@ from tempfile import TemporaryDirectory
 from neuralcheck.application.game_controller import GameController
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.theory.models import TheoryMapEdge, TheoryMapNode, TheoryMapView
-from neuralcheck.ui_theory_map import TheoryMapLayoutEngine
+from neuralcheck.ui_theory_map import TheoryMapLayoutEngine, TheoryMapCanvas
+from neuralcheck.theory.move_visuals import detect_move_visual_hint
 
 
 def main():
@@ -17,7 +18,7 @@ def main():
             e4 = controller.add_child_by_move(root.id, "e4", name="Peón rey")
             e5 = controller.add_child_by_move(e4.node.id, "e5", name="Respuesta")
             nf3 = controller.add_child_by_move(e5.node.id, "Nf3", name="Caballo")
-            controller.add_child_by_move(nf3.node.id, "Nc6", name="Natural")
+            nc6 = controller.add_child_by_move(nf3.node.id, "Nc6", name="Natural")
             controller.add_child_by_move(nf3.node.id, "d6", name="Philidor")
 
             controller.select_node(nf3.node.id)
@@ -29,6 +30,11 @@ def main():
             assert e4.node.id in ids
             assert root.id not in ids
             assert {edge.move_san for edge in view.edges}.issuperset({"e5", "Nf3", "Nc6", "d6"})
+            hints = controller.continuation_move_hints(nf3.node.id)
+            assert {move for _node_id, move, _hint in hints}.issuperset({"Nc6", "d6"})
+            assert all(hint.complete for _node_id, _move, hint in hints)
+            move_hint = controller.move_hint_for_node(nc6.node.id)
+            assert move_hint.from_square and move_hint.to_square
         finally:
             controller.close()
 
@@ -57,6 +63,13 @@ def main():
     for left_index, (x1, y1) in enumerate(positions):
         for x2, y2 in positions[left_index + 1 :]:
             assert ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5 >= min_distance
+
+    roles = TheoryMapCanvas._classify_node_roles(TheoryMapView("n0", "n0", nodes, edges, 2))
+    assert roles["n1"] == "descendant"
+    assert detect_move_visual_hint(
+        "8/8/8/8/8/8/4P3/8 w - - 0 1",
+        "8/8/8/8/4P3/8/8/8 b - - 0 1",
+    ).to_square == "e4"
 
     print("Theory advanced map smoke passed")
 

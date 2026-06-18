@@ -16,6 +16,7 @@ from typing import Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.theory.models import TheoryMapNode, TheoryMapView
+from neuralcheck.theory.move_visuals import MoveVisualHint
 
 
 NAVIGATION_FIXED = "fixed"
@@ -366,6 +367,7 @@ class TheoryMapCanvas(tk.Frame):
         on_previous_sibling_requested: Optional[Callable[[], object]] = None,
         on_next_sibling_requested: Optional[Callable[[], object]] = None,
         on_load_selected_requested: Optional[Callable[[], object]] = None,
+        on_node_edit_requested: Optional[Callable[[str], object]] = None,
         width: int = 760,
         height: int = 430,
         allow_fullscreen: bool = True,
@@ -381,6 +383,7 @@ class TheoryMapCanvas(tk.Frame):
         self.on_previous_sibling_requested = on_previous_sibling_requested
         self.on_next_sibling_requested = on_next_sibling_requested
         self.on_load_selected_requested = on_load_selected_requested
+        self.on_node_edit_requested = on_node_edit_requested
         self.preview_piece_images = dict(preview_piece_images or {})
         self.board_rotation = bool(board_rotation)
         self.forward_depth = 4
@@ -738,6 +741,7 @@ class TheoryMapCanvas(tk.Frame):
             on_previous_sibling_requested=self.on_previous_sibling_requested,
             on_next_sibling_requested=self.on_next_sibling_requested,
             on_load_selected_requested=self.on_load_selected_requested,
+            on_node_edit_requested=self.on_node_edit_requested,
             allow_fullscreen=False,
             preview_piece_images=self.preview_piece_images,
             board_rotation=self.board_rotation,
@@ -884,27 +888,15 @@ class TheoryMapCanvas(tk.Frame):
                 children_by_parent.setdefault(edge.parent_node_id, []).append(edge.child_node_id)
                 parent_by_child[edge.child_node_id] = edge.parent_node_id
 
-        current_id = selected_id
-        while current_id in parent_by_child:
-            parent_id = parent_by_child[current_id]
-            roles[parent_id] = "ancestor"
-            current_id = parent_id
-
-        def mark_descendants(node_id: str) -> None:
-            for child_id in children_by_parent.get(node_id, []):
-                if child_id == selected_id:
-                    continue
-                roles.setdefault(child_id, "descendant")
-                mark_descendants(child_id)
-
-        mark_descendants(selected_id)
-
         parent_id = parent_by_child.get(selected_id)
         if parent_id is not None:
+            roles[parent_id] = "ancestor"
             for sibling_id in children_by_parent.get(parent_id, []):
-                if sibling_id == selected_id:
-                    continue
-                roles[sibling_id] = "sibling"
+                if sibling_id != selected_id:
+                    roles[sibling_id] = "sibling"
+
+        for child_id in children_by_parent.get(selected_id, []):
+            roles[child_id] = "descendant"
 
         roles[selected_id] = "selected"
         return roles
@@ -938,14 +930,28 @@ class TheoryMapCanvas(tk.Frame):
         label_y = (start_y + end_y) / 2
         # Text is intentionally not rotated. The graph can rotate, but labels
         # remain horizontal so the user does not need to turn their head.
-        self.canvas.create_text(
+        label_item = self.canvas.create_text(
             label_x,
             label_y,
             text=move_san,
             font=("Arial", max(8, int(9 * self.zoom)), "bold"),
-            fill="#303030",
-            tags=("graph",),
+            fill="#ffffff",
+            tags=("graph", "edge-label"),
         )
+        bbox = self.canvas.bbox(label_item)
+        if bbox is not None:
+            pad_x = 3
+            pad_y = 1
+            background = self.canvas.create_rectangle(
+                bbox[0] - pad_x,
+                bbox[1] - pad_y,
+                bbox[2] + pad_x,
+                bbox[3] + pad_y,
+                fill="#111111",
+                outline="#111111",
+                tags=("graph", "edge-label-bg"),
+            )
+            self.canvas.tag_lower(background, label_item)
 
     def _draw_node(self, node: TheoryMapNode, x: float, y: float) -> None:
         x, y = self._to_screen(x, y)
@@ -992,6 +998,7 @@ class TheoryMapCanvas(tk.Frame):
         self.canvas.tag_bind(tag, "<Double-ButtonPress-1>", lambda event, node_id=node.id: self._start_node_drag(event, node_id))
         self.canvas.tag_bind(tag, "<Control-ButtonPress-1>", lambda event, node_id=node.id: self._start_subtree_drag(event, node_id))
         self.canvas.tag_bind(tag, "<Control-ButtonPress-3>", lambda event, node_id=node.id: self._start_subtree_rotate(event, node_id))
+        self.canvas.tag_bind(tag, "<Double-Button-3>", lambda event, node_id=node.id: self._on_node_edit(event, node_id))
         self.canvas.tag_bind(tag, "<Enter>", lambda event, node=node: self._show_tooltip(event, node))
         self.canvas.tag_bind(tag, "<Leave>", lambda event: self._hide_tooltip())
 
@@ -999,6 +1006,13 @@ class TheoryMapCanvas(tk.Frame):
         del event
         self.activate_keyboard_focus()
         self.on_node_selected(node_id)
+
+    def _on_node_edit(self, event: tk.Event, node_id: str) -> str:
+        del event
+        self.activate_keyboard_focus()
+        if self.on_node_edit_requested is not None:
+            self.on_node_edit_requested(node_id)
+        return "break"
 
     def _update_scrollregion(self, width: int, height: int, node_radius: float) -> None:
         bbox = self.canvas.bbox("graph") or self.canvas.bbox("all")
@@ -1034,14 +1048,14 @@ class TheoryMapCanvas(tk.Frame):
         self.canvas.yview_moveto(max(0.0, min(1.0, y_fraction)))
 
     def _set_zoom(self, value: float, refresh: bool = True) -> None:
-        anchor_world = self._current_view_center(max(self.canvas.winfo_width(), 1), max(self.canvas.winfo_height(), 1))
+        selected_id = self.controller.selected_node_id
+        anchor_world = self.node_positions.get(selected_id) if selected_id is not None else None
+        if anchor_world is None:
+            anchor_world = self._current_view_center(max(self.canvas.winfo_width(), 1), max(self.canvas.winfo_height(), 1))
         self.zoom = max(0.15, min(4.5, value))
         if refresh:
             self.refresh(force_layout=False)
-            if self._navigation_mode() == NAVIGATION_CONTEXTUAL or self.auto_center_var.get():
-                self.center_selected()
-            else:
-                self._center_canvas_on(*anchor_world)
+            self._center_canvas_on(*anchor_world)
 
     def _bind_mouse_controls(self) -> None:
         self.canvas.bind("<ButtonPress>", lambda event: self.activate_keyboard_focus(), add="+")
@@ -1316,14 +1330,20 @@ class TheoryMapCanvas(tk.Frame):
         tk.Label(frame, text=f"Turno: {title}", background="white", font=("Arial", 9, "bold")).pack(fill="x")
         board = tk.Canvas(frame, width=160, height=160, background="white", highlightthickness=0)
         board.pack(padx=4, pady=(0, 4))
-        self._draw_fen_preview(board, node.fen, 20)
+        self._draw_fen_preview(board, node.fen, 20, self._move_hint_for_node(node.id))
+
+    def _move_hint_for_node(self, node_id: str) -> MoveVisualHint:
+        try:
+            return self.controller.move_hint_for_node(node_id)
+        except Exception:
+            return MoveVisualHint(None, None)
 
     def _hide_tooltip(self) -> None:
         if self.tooltip is not None and self.tooltip.winfo_exists():
             self.tooltip.destroy()
         self.tooltip = None
 
-    def _draw_fen_preview(self, canvas: tk.Canvas, fen: str, cell_size: int) -> None:
+    def _draw_fen_preview(self, canvas: tk.Canvas, fen: str, cell_size: int, hint: Optional[MoveVisualHint] = None) -> None:
         placement = fen.split()[0]
         rows = placement.split("/")
         colors = ("#f0d9b5", "#b58863")
@@ -1341,6 +1361,8 @@ class TheoryMapCanvas(tk.Frame):
                     board_tokens[fen_row_index][fen_col_index] = token
                 fen_col_index += 1
 
+        highlight_squares = {square for square in (hint.from_square if hint else None, hint.to_square if hint else None) if square}
+
         for display_row in range(8):
             for display_col in range(8):
                 if self.board_rotation:
@@ -1350,7 +1372,15 @@ class TheoryMapCanvas(tk.Frame):
                     fen_row = display_row
                     fen_col = display_col
                 token = board_tokens[fen_row][fen_col]
-                TheoryMapCanvas._draw_preview_square(canvas, display_row, display_col, cell_size, colors)
+                logic_square = f"{chr(ord('a') + fen_col)}{8 - fen_row}"
+                TheoryMapCanvas._draw_preview_square(
+                    canvas,
+                    display_row,
+                    display_col,
+                    cell_size,
+                    colors,
+                    highlight=logic_square in highlight_squares,
+                )
                 if token is None:
                     continue
                 cx = display_col * cell_size + cell_size / 2
@@ -1384,12 +1414,14 @@ class TheoryMapCanvas(tk.Frame):
         canvas.create_text(cx, cy, text=PREVIEW_PIECE_SYMBOLS.get(token, token), fill=text_color, font=("Arial", 10, "bold"))
 
     @staticmethod
-    def _draw_preview_square(canvas: tk.Canvas, row: int, col: int, cell_size: int, colors: Tuple[str, str]) -> None:
+    def _draw_preview_square(canvas: tk.Canvas, row: int, col: int, cell_size: int, colors: Tuple[str, str], highlight: bool = False) -> None:
         x1 = col * cell_size
         y1 = row * cell_size
         x2 = x1 + cell_size
         y2 = y1 + cell_size
         canvas.create_rectangle(x1, y1, x2, y2, fill=colors[(row + col) % 2], outline="")
+        if highlight:
+            canvas.create_rectangle(x1, y1, x2, y2, fill="#f7d774", outline="")
 
     @staticmethod
     def _shorten(value: str, max_len: int) -> str:

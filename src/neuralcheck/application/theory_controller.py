@@ -19,6 +19,7 @@ from neuralcheck.theory.models import (
     THEORY_SOURCE_INDEPENDENT,
     THEORY_SOURCE_SYNCHRONIZED,
 )
+from neuralcheck.theory.move_visuals import MoveVisualHint, detect_move_visual_hint
 from neuralcheck.theory.service import TheoryService
 from neuralcheck.theory.sqlite_store import SQLiteTheoryGraphStore
 
@@ -524,6 +525,31 @@ class TheoryController:
         if target_node_id is None:
             return None
         return self.service.get_parent_branch(target_node_id)
+
+
+    def move_hint_for_node(self, node_id: str) -> MoveVisualHint:
+        branch = self.service.get_parent_branch(node_id)
+        if branch is None:
+            return MoveVisualHint(None, None)
+        parent = self.service.get_node(branch.edge.parent_node_id)
+        child = self.service.get_node(branch.edge.child_node_id)
+        if parent is None or child is None:
+            return MoveVisualHint(None, None)
+        return detect_move_visual_hint(parent.fen, child.fen)
+
+    def continuation_move_hints(self, node_id: Optional[str] = None) -> list[tuple[str, str, MoveVisualHint]]:
+        target_node_id = node_id or self._selected_node_id
+        if target_node_id is None:
+            return []
+        parent = self.service.get_node(target_node_id)
+        if parent is None:
+            return []
+        hints: list[tuple[str, str, MoveVisualHint]] = []
+        for branch in self.service.get_children(parent.id):
+            hint = detect_move_visual_hint(parent.fen, branch.node.fen)
+            if hint.complete:
+                hints.append((branch.node.id, branch.edge.move_san, hint))
+        return hints
 
     def load_node_to_board(self, node_id: Optional[str] = None) -> PositionValidationResult:
         if self.game_controller is None:

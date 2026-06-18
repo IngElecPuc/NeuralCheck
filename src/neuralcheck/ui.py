@@ -58,6 +58,7 @@ class ChessUI:
         self.coordinates_var = tk.BooleanVar(master, value=True)
         self.board_view_var = tk.StringVar(master, value="black" if self.rotation else "white")
         self.theory_navigation_mode_var = tk.StringVar(master, value=NAVIGATION_FIXED)
+        self.theory_continuation_arrows_var = tk.BooleanVar(master, value=True)
 
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
@@ -120,6 +121,11 @@ class ChessUI:
         theory_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Teoría", menu=theory_menu)
         theory_menu.add_command(label="Abrir panel de teoría", command=self.open_theory_panel)
+        theory_menu.add_checkbutton(
+            label="Mostrar flechas de continuación",
+            variable=self.theory_continuation_arrows_var,
+            command=self.refresh_board,
+        )
         navigation_menu = tk.Menu(theory_menu, tearoff=0)
         theory_menu.add_cascade(label="Modo de navegación", menu=navigation_menu)
         navigation_menu.add_radiobutton(
@@ -389,6 +395,7 @@ class ChessUI:
                 self.board.create_rectangle(x1, y1, x2, y2, fill=color)
 
         self._draw_pieces()
+        self._draw_theory_continuation_arrows()
         self._draw_selection()
         self._draw_coordinates()
 
@@ -459,6 +466,61 @@ class ChessUI:
             fill="black",
             width=3,
         )
+
+    def _draw_theory_continuation_arrows(self) -> None:
+        if not self.theory_continuation_arrows_var.get():
+            return
+        if self.theory_window is None or not self.theory_window.exists():
+            return
+        if self.theory_controller.selected_node_id is None:
+            return
+        try:
+            hints = self.theory_controller.continuation_move_hints()
+        except Exception:
+            return
+        for _child_id, _move_san, hint in hints:
+            if not hint.complete:
+                continue
+            self._draw_board_arrow(hint.from_square, hint.to_square)
+
+    def _draw_board_arrow(self, from_square: str, to_square: str) -> None:
+        x1, y1 = self._square_center(from_square)
+        x2, y2 = self._square_center(to_square)
+        dx = x2 - x1
+        dy = y2 - y1
+        distance = max((dx * dx + dy * dy) ** 0.5, 1.0)
+        ux = dx / distance
+        uy = dy / distance
+        margin = self.cell_size * 0.22
+        start_x = x1 + ux * margin
+        start_y = y1 + uy * margin
+        end_x = x2 - ux * margin
+        end_y = y2 - uy * margin
+        width = max(5, int(self.cell_size * 0.13))
+        self.board.create_line(
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            fill="#f6d065",
+            width=width + 4,
+            arrow=tk.LAST,
+            arrowshape=(20, 24, 8),
+        )
+        self.board.create_line(
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            fill="#e0a800",
+            width=width,
+            arrow=tk.LAST,
+            arrowshape=(18, 22, 7),
+        )
+
+    def _square_center(self, position: str) -> Tuple[float, float]:
+        x, y = self._translate_position_logic2px(position)
+        return x + self.cell_size / 2, y + self.cell_size / 2
 
     def _draw_coordinates(self) -> None:
         if not self.coordinates:
