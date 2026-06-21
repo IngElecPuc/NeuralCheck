@@ -426,3 +426,11 @@ def test_theory_board_draft_accepts_ambiguous_knight_move_from_board(tmp_path: P
         assert draft.board_after_fen == after_nfg_fen
     finally:
         theory_controller.close()
+
+
+def test_map_edge_label_style_distinguishes_move_color():
+    from neuralcheck.ui_theory_map import TheoryMapCanvas
+
+    assert TheoryMapCanvas._edge_label_style("white") == ("#111111", "#ffffff")
+    assert TheoryMapCanvas._edge_label_style("black") == ("#ffffff", "#111111")
+

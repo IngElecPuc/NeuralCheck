@@ -390,6 +390,10 @@ class TheoryMapCanvas(tk.Frame):
         self.backward_depth = 2
         self.zoom = 1.0
         self.rotation_radians = 0.0
+        self.camera_x = 0.0
+        self.camera_y = 0.0
+        self._camera_initialized = False
+        self._world_bounds: Tuple[float, float, float, float] = (-1000.0, -1000.0, 1000.0, 1000.0)
         self.auto_layout_var = tk.BooleanVar(value=False)
         self.auto_center_var = tk.BooleanVar(value=False)
         self.node_positions: Dict[str, Tuple[float, float]] = {}
@@ -442,20 +446,20 @@ class TheoryMapCanvas(tk.Frame):
             command=self._on_depth_change,
         )
         self.forward_spinbox.grid(row=0, column=3, sticky="w", padx=2)
-        tk.Button(depth_controls, text="Aplicar", command=self._on_depth_change).grid(row=0, column=4, padx=2)
+        tk.Button(depth_controls, text="Aplicar profundidad", command=self._on_depth_change).grid(row=0, column=4, padx=2)
 
         view_controls = tk.Frame(controls)
         view_controls.grid(row=1, column=0, sticky="w", pady=(2, 0))
         tk.Button(view_controls, text="Zoom +", command=self.zoom_in).grid(row=0, column=0, padx=2)
         tk.Button(view_controls, text="Zoom -", command=self.zoom_out).grid(row=0, column=1, padx=2)
         tk.Button(view_controls, text="Ajustar a vista", command=self.fit_to_view).grid(row=0, column=2, padx=2)
-        tk.Button(view_controls, text="Centrar", command=self.center_selected).grid(row=0, column=3, padx=2)
+        tk.Button(view_controls, text="Centrar seleccionado", command=self.center_selected).grid(row=0, column=3, padx=2)
         tk.Button(view_controls, text="↺", command=lambda: self.rotate_by(-math.radians(15))).grid(row=0, column=4, padx=2)
         tk.Button(view_controls, text="↻", command=lambda: self.rotate_by(math.radians(15))).grid(row=0, column=5, padx=2)
 
         layout_controls = tk.Frame(controls)
         layout_controls.grid(row=2, column=0, sticky="w", pady=(2, 0))
-        tk.Button(layout_controls, text="Recalcular", command=lambda: self.refresh(force_layout=True)).grid(row=0, column=0, padx=2)
+        tk.Button(layout_controls, text="Reordenar mapa", command=lambda: self.refresh(force_layout=True)).grid(row=0, column=0, padx=2)
         self.auto_layout_check = tk.Checkbutton(
             layout_controls,
             text="Autoordenar",
@@ -470,12 +474,11 @@ class TheoryMapCanvas(tk.Frame):
             command=lambda: self.refresh(force_layout=self.auto_layout_var.get()),
         )
         self.auto_center_check.grid(row=0, column=2, padx=2)
-        tk.Button(layout_controls, text="Restablecer", command=self.reset_view).grid(row=0, column=3, padx=2)
         if self._allow_fullscreen:
-            tk.Button(layout_controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=0, column=4, padx=2)
+            tk.Button(layout_controls, text="Pantalla completa", command=self.open_fullscreen).grid(row=0, column=3, padx=2)
 
         self.mode_label_var = tk.StringVar(value="Modo: vista fija")
-        tk.Label(layout_controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=0, column=5, padx=(8, 2), sticky="w")
+        tk.Label(layout_controls, textvariable=self.mode_label_var, font=("Arial", 8)).grid(row=0, column=4, padx=(8, 2), sticky="w")
 
         self.deep_graph_warning_var = tk.StringVar(value="")
         self.deep_graph_warning_label = tk.Label(
@@ -509,14 +512,11 @@ class TheoryMapCanvas(tk.Frame):
         )
         self.canvas.grid(row=2, column=0, sticky="nsew", padx=(2, 0), pady=(2, 0))
 
-        self.vertical_scroll = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.vertical_scroll = tk.Scrollbar(self, orient="vertical", command=self._yscroll)
         self.vertical_scroll.grid(row=2, column=1, sticky="ns", pady=(2, 0))
-        self.horizontal_scroll = tk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.horizontal_scroll = tk.Scrollbar(self, orient="horizontal", command=self._xscroll)
         self.horizontal_scroll.grid(row=3, column=0, sticky="ew", padx=(2, 0), pady=(0, 2))
-        self.canvas.configure(
-            xscrollcommand=self.horizontal_scroll.set,
-            yscrollcommand=self.vertical_scroll.set,
-        )
+        self.canvas.configure(scrollregion=(0, 0, width, height))
         self._bind_mouse_controls()
         self._bind_keyboard_controls()
         self.canvas.bind("<Configure>", lambda event: self.refresh(force_layout=True) if self.auto_layout_var.get() else None)
@@ -585,13 +585,56 @@ class TheoryMapCanvas(tk.Frame):
     def _zoom_value(self) -> float:
         return max(self.zoom, 0.001)
 
+    def _viewport_size(self) -> Tuple[float, float]:
+        return float(max(self.canvas.winfo_width(), 1)), float(max(self.canvas.winfo_height(), 1))
+
     def _to_screen(self, x: float, y: float) -> Tuple[float, float]:
+        width, height = self._viewport_size()
+        dx = x - self.camera_x
+        dy = y - self.camera_y
+        cos_angle = math.cos(self.rotation_radians)
+        sin_angle = math.sin(self.rotation_radians)
+        rotated_x = dx * cos_angle - dy * sin_angle
+        rotated_y = dx * sin_angle + dy * cos_angle
         zoom = self._zoom_value()
-        return x * zoom, y * zoom
+        return width / 2 + rotated_x * zoom, height / 2 + rotated_y * zoom
 
     def _to_world(self, x: float, y: float) -> Tuple[float, float]:
+        width, height = self._viewport_size()
         zoom = self._zoom_value()
-        return x / zoom, y / zoom
+        sx = (x - width / 2) / zoom
+        sy = (y - height / 2) / zoom
+        cos_angle = math.cos(self.rotation_radians)
+        sin_angle = math.sin(self.rotation_radians)
+        world_dx = sx * cos_angle + sy * sin_angle
+        world_dy = -sx * sin_angle + sy * cos_angle
+        return self.camera_x + world_dx, self.camera_y + world_dy
+
+    def _screen_delta_to_world(self, dx: float, dy: float) -> Tuple[float, float]:
+        zoom = self._zoom_value()
+        sx = dx / zoom
+        sy = dy / zoom
+        cos_angle = math.cos(self.rotation_radians)
+        sin_angle = math.sin(self.rotation_radians)
+        return sx * cos_angle + sy * sin_angle, -sx * sin_angle + sy * cos_angle
+
+    def _set_camera_for_world_at_screen(
+        self,
+        world_x: float,
+        world_y: float,
+        screen_x: float,
+        screen_y: float,
+    ) -> None:
+        width, height = self._viewport_size()
+        zoom = self._zoom_value()
+        sx = (screen_x - width / 2) / zoom
+        sy = (screen_y - height / 2) / zoom
+        cos_angle = math.cos(self.rotation_radians)
+        sin_angle = math.sin(self.rotation_radians)
+        world_offset_x = sx * cos_angle + sy * sin_angle
+        world_offset_y = -sx * sin_angle + sy * cos_angle
+        self.camera_x = world_x - world_offset_x
+        self.camera_y = world_y - world_offset_y
 
     def _on_auto_layout_change(self) -> None:
         if not self.auto_layout_var.get():
@@ -674,39 +717,45 @@ class TheoryMapCanvas(tk.Frame):
             self.deep_graph_warning_label.grid_remove()
 
     def zoom_in(self) -> None:
-        self._set_zoom(self.zoom * 1.15)
+        self._set_zoom_around_view_center(self.zoom * 1.15)
 
     def zoom_out(self) -> None:
-        self._set_zoom(self.zoom / 1.15)
+        self._set_zoom_around_view_center(self.zoom / 1.15)
 
     def reset_view(self) -> None:
+        """Compatibility hook: reset view transform without recalculating layout."""
         self.zoom = 1.0
         self.rotation_radians = 0.0
-        self.refresh(force_layout=True)
-        self.center_selected()
+        self.refresh(force_layout=False)
 
     def reset_zoom(self) -> None:
         self.reset_view()
 
     def rotate_by(self, angle_radians: float) -> None:
         self.rotation_radians = (self.rotation_radians + angle_radians) % (math.pi * 2)
-        self.refresh(force_layout=True)
+        self.refresh(force_layout=False)
 
     def fit_to_view(self) -> None:
-        bbox = self.canvas.bbox("graph") or self.canvas.bbox("all")
-        if bbox is None:
+        if not self.node_positions:
             return
-        canvas_width = max(self.canvas.winfo_width(), 1)
-        canvas_height = max(self.canvas.winfo_height(), 1)
-        graph_width = max(float(bbox[2] - bbox[0]), 1.0)
-        graph_height = max(float(bbox[3] - bbox[1]), 1.0)
-        center_world = self._to_world((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
-        scale = min(canvas_width * 0.86 / graph_width, canvas_height * 0.86 / graph_height)
+        radius = self._base_node_radius() + 32.0
+        xs = [position[0] for position in self.node_positions.values()]
+        ys = [position[1] for position in self.node_positions.values()]
+        left = min(xs) - radius
+        right = max(xs) + radius
+        top = min(ys) - radius
+        bottom = max(ys) + radius
+        width, height = self._viewport_size()
+        graph_width = max(right - left, 1.0)
+        graph_height = max(bottom - top, 1.0)
+        scale = min(width * 0.86 / graph_width, height * 0.86 / graph_height)
         if scale <= 0:
             return
-        self._set_zoom(self.zoom * scale, refresh=False)
+        self.zoom = max(0.15, min(4.5, scale))
+        self.camera_x = (left + right) / 2
+        self.camera_y = (top + bottom) / 2
+        self._camera_initialized = True
         self.refresh(force_layout=False)
-        self._center_canvas_on(*center_world)
 
     def center_selected(self) -> None:
         selected_id = self.controller.selected_node_id
@@ -748,6 +797,9 @@ class TheoryMapCanvas(tk.Frame):
         )
         fullscreen_map.zoom = self.zoom
         fullscreen_map.rotation_radians = self.rotation_radians
+        fullscreen_map.camera_x = self.camera_x
+        fullscreen_map.camera_y = self.camera_y
+        fullscreen_map._camera_initialized = self._camera_initialized
         fullscreen_map.auto_layout_var.set(self.auto_layout_var.get())
         fullscreen_map.auto_center_var.set(self.auto_center_var.get())
         fullscreen_map.forward_depth_var.set(self.forward_depth)
@@ -802,24 +854,42 @@ class TheoryMapCanvas(tk.Frame):
                 node_radius=node_radius_world,
                 forward_step=max(node_radius_world * 3.2, 150.0),
                 backward_step=max(node_radius_world * 3.0, 135.0),
-                rotation_radians=self.rotation_radians,
+                rotation_radians=0.0,
                 min_margin=30.0,
             )
             layout = engine.layout(view, selected_node_id=view.selected_node_id, center=center)
             self._cached_layout = layout
             self._persist_layout_if_fixed(view, layout)
         self.node_positions = {node_id: (node.x, node.y) for node_id, node in layout.nodes.items()}
+        if not self._camera_initialized:
+            selected_id = view.selected_node_id
+            if selected_id is not None and selected_id in self.node_positions:
+                self.camera_x, self.camera_y = self.node_positions[selected_id]
+            elif self.node_positions:
+                xs = [position[0] for position in self.node_positions.values()]
+                ys = [position[1] for position in self.node_positions.values()]
+                self.camera_x = (min(xs) + max(xs)) / 2
+                self.camera_y = (min(ys) + max(ys)) / 2
+            self._camera_initialized = True
         self.node_roles = self._classify_node_roles(view)
+        if self.auto_layout_var.get() and self.auto_center_var.get():
+            selected_id = view.selected_node_id
+            if selected_id is not None and selected_id in self.node_positions:
+                self.camera_x, self.camera_y = self.node_positions[selected_id]
+                self._camera_initialized = True
 
         nodes_by_id = {node.id: node for node in view.nodes}
         for edge in view.edges:
             if edge.parent_node_id not in self.node_positions or edge.child_node_id not in self.node_positions:
                 continue
+            parent_node = nodes_by_id.get(edge.parent_node_id)
+            mover_color = parent_node.side_to_move if parent_node is not None else "black"
             self._draw_edge(
                 self.node_positions[edge.parent_node_id],
                 self.node_positions[edge.child_node_id],
                 edge.move_san,
                 node_radius,
+                mover_color,
             )
 
         for node in view.nodes:
@@ -829,8 +899,6 @@ class TheoryMapCanvas(tk.Frame):
             self._draw_node(node, *position)
 
         self._update_scrollregion(width, height, node_radius)
-        if self.auto_layout_var.get() and self.auto_center_var.get():
-            self.center_selected()
 
     def _persist_layout_if_fixed(self, view: TheoryMapView, layout: GraphLayout) -> None:
         if self._navigation_mode() != NAVIGATION_FIXED:
@@ -902,9 +970,14 @@ class TheoryMapCanvas(tk.Frame):
         return roles
 
     def _current_view_center(self, width: int, height: int) -> Tuple[float, float]:
-        left = self.canvas.canvasx(0)
-        top = self.canvas.canvasy(0)
-        return self._to_world(left + width / 2, top + height / 2)
+        del width, height
+        return self.camera_x, self.camera_y
+
+    @staticmethod
+    def _edge_label_style(mover_color: str) -> Tuple[str, str]:
+        if mover_color == "white":
+            return "#111111", "#ffffff"
+        return "#ffffff", "#111111"
 
     def _draw_edge(
         self,
@@ -912,6 +985,7 @@ class TheoryMapCanvas(tk.Frame):
         target: Tuple[float, float],
         move_san: str,
         node_radius: float,
+        mover_color: str,
     ) -> None:
         x1, y1 = self._to_screen(source[0], source[1])
         x2, y2 = self._to_screen(target[0], target[1])
@@ -930,12 +1004,13 @@ class TheoryMapCanvas(tk.Frame):
         label_y = (start_y + end_y) / 2
         # Text is intentionally not rotated. The graph can rotate, but labels
         # remain horizontal so the user does not need to turn their head.
+        label_fill, label_background = self._edge_label_style(mover_color)
         label_item = self.canvas.create_text(
             label_x,
             label_y,
             text=move_san,
             font=("Arial", max(8, int(9 * self.zoom)), "bold"),
-            fill="#ffffff",
+            fill=label_fill,
             tags=("graph", "edge-label"),
         )
         bbox = self.canvas.bbox(label_item)
@@ -947,8 +1022,8 @@ class TheoryMapCanvas(tk.Frame):
                 bbox[1] - pad_y,
                 bbox[2] + pad_x,
                 bbox[3] + pad_y,
-                fill="#111111",
-                outline="#111111",
+                fill=label_background,
+                outline=label_background,
                 tags=("graph", "edge-label-bg"),
             )
             self.canvas.tag_lower(background, label_item)
@@ -1015,47 +1090,103 @@ class TheoryMapCanvas(tk.Frame):
         return "break"
 
     def _update_scrollregion(self, width: int, height: int, node_radius: float) -> None:
-        bbox = self.canvas.bbox("graph") or self.canvas.bbox("all")
-        if bbox is None:
-            self.canvas.configure(scrollregion=(0, 0, width, height))
-            return
-        # Keep a larger virtual world around the graph. This makes mouse pan
-        # and rotation feel less boxed-in when the current subgraph is small.
-        margin = int(max(node_radius + 180, width * 0.75, height * 0.75))
-        x1, y1, x2, y2 = bbox
-        self.canvas.configure(
-            scrollregion=(
-                min(-margin, x1 - margin),
-                min(-margin, y1 - margin),
-                max(width + margin, x2 + margin),
-                max(height + margin, y2 + margin),
-            )
-        )
+        del width, height
+        if not self.node_positions:
+            self._world_bounds = (-1000.0, -1000.0, 1000.0, 1000.0)
+        else:
+            xs = [position[0] for position in self.node_positions.values()]
+            ys = [position[1] for position in self.node_positions.values()]
+            viewport_width, viewport_height = self._viewport_size()
+            margin = max(node_radius / self._zoom_value() + 260.0, viewport_width / self._zoom_value(), viewport_height / self._zoom_value())
+            self._world_bounds = (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+        viewport_width, viewport_height = self._viewport_size()
+        self.canvas.configure(scrollregion=(0, 0, int(viewport_width), int(viewport_height)))
+        self._sync_scrollbars()
 
-    def _center_canvas_on(self, x: float, y: float) -> None:
-        screen_x, screen_y = self._to_screen(x, y)
-        bbox = self.canvas.cget("scrollregion")
-        if not bbox:
-            return
-        left, top, right, bottom = [float(value) for value in bbox.split()]
-        region_width = max(right - left, 1.0)
-        region_height = max(bottom - top, 1.0)
-        canvas_width = max(self.canvas.winfo_width(), 1)
-        canvas_height = max(self.canvas.winfo_height(), 1)
-        x_fraction = (screen_x - left - canvas_width / 2) / max(region_width - canvas_width, 1.0)
-        y_fraction = (screen_y - top - canvas_height / 2) / max(region_height - canvas_height, 1.0)
-        self.canvas.xview_moveto(max(0.0, min(1.0, x_fraction)))
-        self.canvas.yview_moveto(max(0.0, min(1.0, y_fraction)))
+    def _center_canvas_on(self, x: float, y: float, *, refresh: bool = True) -> None:
+        self.camera_x = float(x)
+        self.camera_y = float(y)
+        self._camera_initialized = True
+        if refresh:
+            self.refresh(force_layout=False)
+        else:
+            self._sync_scrollbars()
 
     def _set_zoom(self, value: float, refresh: bool = True) -> None:
-        selected_id = self.controller.selected_node_id
-        anchor_world = self.node_positions.get(selected_id) if selected_id is not None else None
-        if anchor_world is None:
-            anchor_world = self._current_view_center(max(self.canvas.winfo_width(), 1), max(self.canvas.winfo_height(), 1))
+        self._set_zoom_around_view_center(value, refresh=refresh)
+
+    def _set_zoom_around_view_center(self, value: float, *, refresh: bool = True) -> None:
         self.zoom = max(0.15, min(4.5, value))
         if refresh:
             self.refresh(force_layout=False)
-            self._center_canvas_on(*anchor_world)
+
+    def _set_zoom_around_screen_point(self, value: float, screen_x: float, screen_y: float, *, refresh: bool = True) -> None:
+        anchor_world = self._to_world(screen_x, screen_y)
+        self.zoom = max(0.15, min(4.5, value))
+        self._set_camera_for_world_at_screen(anchor_world[0], anchor_world[1], screen_x, screen_y)
+        if refresh:
+            self.refresh(force_layout=False)
+
+    def _sync_scrollbars(self) -> None:
+        left, top, right, bottom = self._world_bounds
+        region_width = max(right - left, 1.0)
+        region_height = max(bottom - top, 1.0)
+        viewport_width, viewport_height = self._viewport_size()
+        half_width = viewport_width / (2 * self._zoom_value())
+        half_height = viewport_height / (2 * self._zoom_value())
+        view_left = self.camera_x - half_width
+        view_right = self.camera_x + half_width
+        view_top = self.camera_y - half_height
+        view_bottom = self.camera_y + half_height
+        self.horizontal_scroll.set(
+            max(0.0, min(1.0, (view_left - left) / region_width)),
+            max(0.0, min(1.0, (view_right - left) / region_width)),
+        )
+        self.vertical_scroll.set(
+            max(0.0, min(1.0, (view_top - top) / region_height)),
+            max(0.0, min(1.0, (view_bottom - top) / region_height)),
+        )
+
+    def _xscroll(self, *args: str) -> None:
+        self._scroll_camera("x", *args)
+
+    def _yscroll(self, *args: str) -> None:
+        self._scroll_camera("y", *args)
+
+    def _scroll_camera(self, axis: str, *args: str) -> None:
+        if not args:
+            return
+        left, top, right, bottom = self._world_bounds
+        viewport_width, viewport_height = self._viewport_size()
+        if axis == "x":
+            region_start, region_end = left, right
+            viewport_size = viewport_width / self._zoom_value()
+            current_center = self.camera_x
+        else:
+            region_start, region_end = top, bottom
+            viewport_size = viewport_height / self._zoom_value()
+            current_center = self.camera_y
+        region_size = max(region_end - region_start, 1.0)
+        if args[0] == "moveto" and len(args) >= 2:
+            fraction = max(0.0, min(1.0, float(args[1])))
+            new_center = region_start + fraction * region_size + viewport_size / 2
+        elif args[0] == "scroll" and len(args) >= 3:
+            amount = int(args[1])
+            unit = args[2]
+            step = viewport_size * (0.85 if unit == "pages" else 0.12)
+            new_center = current_center + amount * step
+        else:
+            return
+        min_center = region_start + viewport_size / 2
+        max_center = region_end - viewport_size / 2
+        if min_center <= max_center:
+            new_center = max(min_center, min(max_center, new_center))
+        if axis == "x":
+            self.camera_x = new_center
+        else:
+            self.camera_y = new_center
+        self._camera_initialized = True
+        self.refresh(force_layout=False)
 
     def _bind_mouse_controls(self) -> None:
         self.canvas.bind("<ButtonPress>", lambda event: self.activate_keyboard_focus(), add="+")
@@ -1076,8 +1207,8 @@ class TheoryMapCanvas(tk.Frame):
 
         # Wheel zoom. Windows/macOS use MouseWheel. Linux/X11 often uses 4/5.
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
-        self.canvas.bind("<Button-4>", lambda event: self._zoom_from_wheel(1))
-        self.canvas.bind("<Button-5>", lambda event: self._zoom_from_wheel(-1))
+        self.canvas.bind("<Button-4>", lambda event: self._zoom_from_wheel(1, event.x, event.y))
+        self.canvas.bind("<Button-5>", lambda event: self._zoom_from_wheel(-1, event.x, event.y))
 
     def _bind_keyboard_controls(self) -> None:
         self.canvas.configure(takefocus=1)
@@ -1131,7 +1262,6 @@ class TheoryMapCanvas(tk.Frame):
         if self._node_drag_id is not None or self._subtree_drag_ids:
             return
         self._last_drag = (event.x, event.y)
-        self.canvas.scan_mark(event.x, event.y)
 
     def _on_left_drag(self, event: tk.Event) -> None:
         if self._node_drag_id is not None:
@@ -1140,7 +1270,16 @@ class TheoryMapCanvas(tk.Frame):
         if self._subtree_drag_ids:
             self._drag_subtree_to(event)
             return
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        if self._last_drag is None:
+            self._last_drag = (event.x, event.y)
+            return
+        previous_x, previous_y = self._last_drag
+        dx_world, dy_world = self._screen_delta_to_world(event.x - previous_x, event.y - previous_y)
+        self.camera_x -= dx_world
+        self.camera_y -= dy_world
+        self._camera_initialized = True
+        self._last_drag = (event.x, event.y)
+        self.refresh(force_layout=False)
 
     def _finish_left_interaction(self) -> None:
         if self._node_drag_id is not None or self._subtree_drag_ids:
@@ -1168,8 +1307,10 @@ class TheoryMapCanvas(tk.Frame):
         dy = event.y - previous_y
         delta = dx * 0.008 - dy * 0.003
         if abs(delta) >= 0.001:
+            anchor_world = self._to_world(self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2)
             self.rotation_radians = (self.rotation_radians + delta) % (math.pi * 2)
-            self.refresh(force_layout=True)
+            self._set_camera_for_world_at_screen(anchor_world[0], anchor_world[1], self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2)
+            self.refresh(force_layout=False)
         self._right_drag = (event.x, event.y)
 
     def _finish_right_interaction(self) -> None:
@@ -1208,7 +1349,7 @@ class TheoryMapCanvas(tk.Frame):
         if self._subtree_rotate_center is None:
             self._subtree_rotate_ids = set()
             return "break"
-        canvas_x, canvas_y = self._to_world(self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+        canvas_x, canvas_y = self._to_world(event.x, event.y)
         cx, cy = self._subtree_rotate_center
         self._subtree_rotate_previous_angle = math.atan2(canvas_y - cy, canvas_x - cx)
         return "break"
@@ -1217,8 +1358,7 @@ class TheoryMapCanvas(tk.Frame):
         if self._node_drag_id is None or self._node_drag_previous is None:
             return
         previous_x, previous_y = self._node_drag_previous
-        dx = (self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)) / self._zoom_value()
-        dy = (self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)) / self._zoom_value()
+        dx, dy = self._screen_delta_to_world(event.x - previous_x, event.y - previous_y)
         self._move_visible_nodes({self._node_drag_id}, dx, dy)
         self._node_drag_previous = (event.x, event.y)
 
@@ -1226,15 +1366,14 @@ class TheoryMapCanvas(tk.Frame):
         if not self._subtree_drag_ids or self._node_drag_previous is None:
             return
         previous_x, previous_y = self._node_drag_previous
-        dx = (self.canvas.canvasx(event.x) - self.canvas.canvasx(previous_x)) / self._zoom_value()
-        dy = (self.canvas.canvasy(event.y) - self.canvas.canvasy(previous_y)) / self._zoom_value()
+        dx, dy = self._screen_delta_to_world(event.x - previous_x, event.y - previous_y)
         self._move_visible_nodes(self._subtree_drag_ids, dx, dy)
         self._node_drag_previous = (event.x, event.y)
 
     def _rotate_subtree_to(self, event: tk.Event) -> None:
         if not self._subtree_rotate_ids or self._subtree_rotate_center is None:
             return
-        canvas_x, canvas_y = self._to_world(self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+        canvas_x, canvas_y = self._to_world(event.x, event.y)
         cx, cy = self._subtree_rotate_center
         angle = math.atan2(canvas_y - cy, canvas_x - cx)
         if self._subtree_rotate_previous_angle is None:
@@ -1305,7 +1444,7 @@ class TheoryMapCanvas(tk.Frame):
         dy = previous_y - event.y
         if abs(dy) >= 2:
             factor = 1.0 + max(-0.35, min(0.35, dy / 220.0))
-            self._set_zoom(self.zoom * factor)
+            self._set_zoom_around_screen_point(self.zoom * factor, event.x, event.y)
         self._middle_drag = (event.x, event.y)
 
     def _clear_middle_drag(self) -> None:
@@ -1313,11 +1452,14 @@ class TheoryMapCanvas(tk.Frame):
 
     def _on_mouse_wheel(self, event: tk.Event) -> None:
         direction = 1 if event.delta > 0 else -1
-        self._zoom_from_wheel(direction)
+        self._zoom_from_wheel(direction, event.x, event.y)
 
-    def _zoom_from_wheel(self, direction: int) -> None:
+    def _zoom_from_wheel(self, direction: int, x: Optional[int] = None, y: Optional[int] = None) -> None:
         factor = 1.12 if direction > 0 else 1 / 1.12
-        self._set_zoom(self.zoom * factor)
+        if x is None or y is None:
+            width, height = self._viewport_size()
+            x, y = int(width / 2), int(height / 2)
+        self._set_zoom_around_screen_point(self.zoom * factor, float(x), float(y))
 
     def _show_tooltip(self, event: tk.Event, node: TheoryMapNode) -> None:
         self._hide_tooltip()
