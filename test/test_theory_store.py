@@ -313,3 +313,71 @@ def test_add_child_by_move_preserves_en_passant_in_theory_nodes(service: TheoryS
     assert d5.node.fen == "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w - d6 0 1"
     assert exd6.node.fen == "rnbqkbnr/1pp1pppp/p2P4/8/8/8/PPPP1PPP/RNBQKBNR b - - 0 1"
     assert exd6.edge.move_san == "exd6"
+
+CUSTOM_EP_ROOT_FEN = "r1b1k2r/p2p1ppp/1qp1p3/3nP3/1bP1NP2/8/PP2K1PP/R1BQ1B1R b - - 0 1"
+CUSTOM_AFTER_F5_LEGACY_FEN = "r1b1k2r/p2p2pp/1qp1p3/3nPp2/1bP1NP2/8/PP2K1PP/R1BQ1B1R w - - 0 1"
+CUSTOM_AFTER_F5_STATE_FEN = "r1b1k2r/p2p2pp/1qp1p3/3nPp2/1bP1NP2/8/PP2K1PP/R1BQ1B1R w - f6 0 1"
+CUSTOM_AFTER_EXF6_FEN = "r1b1k2r/p2p2pp/1qp1pP2/3n4/1bP1NP2/8/PP2K1PP/R1BQ1B1R b - - 0 1"
+
+
+def test_theory_resolves_legacy_child_en_passant_from_parent_edge(service: TheoryService):
+    book = service.create_book("Lasker custom")
+    root = service.create_root(book.id, CUSTOM_EP_ROOT_FEN, name="Antes de f5")
+    f5 = service.add_child(root.id, CUSTOM_AFTER_F5_LEGACY_FEN, move_san="f5", name="f5 legacy")
+
+    assert f5.node.fen == CUSTOM_AFTER_F5_LEGACY_FEN
+    assert service.resolve_node_fen(f5.node.id) == CUSTOM_AFTER_F5_STATE_FEN
+
+    exf6 = service.add_child_by_move(f5.node.id, "exf6")
+
+    assert exf6.node.fen == CUSTOM_AFTER_EXF6_FEN
+    assert exf6.edge.move_san == "exf6"
+
+
+def test_theory_controller_loads_independent_legacy_en_passant_state(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        book = theory_controller.create_book("Lasker custom")
+        root = theory_controller.service.create_root(book.id, CUSTOM_EP_ROOT_FEN, name="Antes de f5")
+        f5 = theory_controller.service.add_child(root.id, CUSTOM_AFTER_F5_LEGACY_FEN, move_san="f5")
+
+        validation = theory_controller.load_node_to_board(f5.node.id)
+
+        assert validation.valid
+        assert game_controller.current_fen(include_state=True) == CUSTOM_AFTER_F5_STATE_FEN
+        assert "f6" in game_controller.legal_targets("e5")
+    finally:
+        theory_controller.close()
+
+
+def test_theory_resolves_legacy_en_passant_without_full_path_replay(service: TheoryService, monkeypatch):
+    book = service.create_book("Fast en passant")
+    root = service.create_root(book.id, CUSTOM_EP_ROOT_FEN, name="Antes de f5")
+    f5 = service.add_child(root.id, CUSTOM_AFTER_F5_LEGACY_FEN, move_san="f5", name="f5 legacy")
+
+    def fail_full_path(_node):
+        raise AssertionError("full path replay should not be needed for local en-passant repair")
+
+    monkeypatch.setattr(service, "_resolve_node_fen_from_path", fail_full_path)
+
+    assert service.resolve_node_fen(f5.node.id) == CUSTOM_AFTER_F5_STATE_FEN
+    exf6 = service.add_child_by_move(f5.node.id, "exf6")
+    assert exf6.node.fen == CUSTOM_AFTER_EXF6_FEN
+
+
+def test_theory_resolved_fen_cache_avoids_replaying_parent_edge(service: TheoryService, monkeypatch):
+    book = service.create_book("Cached en passant")
+    root = service.create_root(book.id, CUSTOM_EP_ROOT_FEN, name="Antes de f5")
+    f5 = service.add_child(root.id, CUSTOM_AFTER_F5_LEGACY_FEN, move_san="f5", name="f5 legacy")
+
+    assert service.resolve_node_fen(f5.node.id) == CUSTOM_AFTER_F5_STATE_FEN
+
+    def fail_parent_edge(*_args, **_kwargs):
+        raise AssertionError("cached FEN should avoid another parent-edge replay")
+
+    monkeypatch.setattr(service, "_resolve_node_fen_from_parent_edge", fail_parent_edge)
+    assert service.resolve_node_fen(f5.node.id) == CUSTOM_AFTER_F5_STATE_FEN

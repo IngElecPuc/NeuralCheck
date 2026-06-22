@@ -587,7 +587,7 @@ class TheoryController:
             line = self._line_to_node(book, node.id)
             validation = self.game_controller.load_line_from_initial(line)
         else:
-            validation = self.game_controller.apply_fen_position(node.fen)
+            validation = self.game_controller.apply_fen_position(self.service.resolve_node_fen(node.id))
 
         if validation.valid:
             self.select_node(node.id)
