@@ -22,7 +22,6 @@ from neuralcheck.application.game_controller import GameController, MoveAttempt
 from neuralcheck.application.theory_controller import TheoryController
 from neuralcheck.ui_position_editor import PositionEditorWindow
 from neuralcheck.ui_theory import TheoryWindow
-from neuralcheck.ui_theory_map import NAVIGATION_CONTEXTUAL, NAVIGATION_FIXED
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +45,7 @@ class ChessUI:
         self.cell_size = self.config["Size"]["square"]
 
         self.master = master
+        self.master.title("NeuralCheck")
         self.rotation = rotation  # False for White's view, True for Black's view.
         self.controller = controller if controller is not None else GameController()
         self.theory_controller = TheoryController.with_sqlite(game_controller=self.controller)
@@ -57,8 +57,11 @@ class ChessUI:
         self.coordinates = True
         self.coordinates_var = tk.BooleanVar(master, value=True)
         self.board_view_var = tk.StringVar(master, value="black" if self.rotation else "white")
-        self.theory_navigation_mode_var = tk.StringVar(master, value=NAVIGATION_FIXED)
         self.theory_continuation_arrows_var = tk.BooleanVar(master, value=True)
+        self._theory_mode_active = False
+        self._clock_panel_visible: Optional[bool] = None
+        self._base_window_width = 0
+        self._base_window_height = 0
 
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
@@ -125,20 +128,6 @@ class ChessUI:
             label="Mostrar flechas de continuación",
             variable=self.theory_continuation_arrows_var,
             command=self.refresh_board,
-        )
-        navigation_menu = tk.Menu(theory_menu, tearoff=0)
-        theory_menu.add_cascade(label="Modo de navegación", menu=navigation_menu)
-        navigation_menu.add_radiobutton(
-            label="Vista fija",
-            variable=self.theory_navigation_mode_var,
-            value=NAVIGATION_FIXED,
-            command=self.set_theory_navigation_mode,
-        )
-        navigation_menu.add_radiobutton(
-            label="Contextual",
-            variable=self.theory_navigation_mode_var,
-            value=NAVIGATION_CONTEXTUAL,
-            command=self.set_theory_navigation_mode,
         )
 
     def _build_clock_menu(self, clock_menu: tk.Menu) -> None:
@@ -221,6 +210,8 @@ class ChessUI:
         configured_height = int(self.config["Size"].get("height", 0))
         required_width = max(configured_width, master.winfo_reqwidth())
         required_height = max(configured_height, master.winfo_reqheight())
+        self._base_window_width = required_width
+        self._base_window_height = required_height
         master.minsize(required_width, required_height)
         master.geometry(f"{required_width}x{required_height}")
 
@@ -300,47 +291,58 @@ class ChessUI:
 
     def _build_control_panel(self) -> None:
         self.panel_controls = tk.Frame(self.main_frame)
-        self.panel_controls.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        self.panel_controls.grid(row=1, column=0, sticky="ew", padx=10, pady=6)
         self.panel_controls.columnconfigure(0, weight=0)
-        self.panel_controls.columnconfigure(1, weight=1)
+        self.panel_controls.columnconfigure(1, weight=0)
 
-        self.basic_controls = tk.Frame(self.panel_controls)
-        self.basic_controls.grid(row=0, column=0, sticky="nw")
-        self.new_button = tk.Button(self.basic_controls, text="New Game", command=self.new_game)
-        self.new_button.grid(row=0, column=0, padx=20, pady=5)
-        self.load_button = tk.Button(self.basic_controls, text="Load Game", command=self.load_game)
-        self.load_button.grid(row=1, column=0, padx=20, pady=5)
-        self.save_button = tk.Button(self.basic_controls, text="Save Game", command=self.save_game)
-        self.save_button.grid(row=2, column=0, padx=20, pady=5)
+        self.controls_spacer = tk.Frame(self.panel_controls, width=self.cell_size * 3, height=1)
+        self.controls_spacer.grid(row=0, column=0, sticky="w")
+        self.controls_spacer.grid_propagate(False)
 
-        self.theory_board_controls = tk.LabelFrame(self.panel_controls, text="Teoría desde tablero")
-        self.theory_board_controls.grid(row=0, column=1, sticky="ew", padx=20, pady=5)
-        self.theory_board_controls.columnconfigure(0, weight=1)
-        self.theory_status_var = tk.StringVar(value="Mueve una pieza desde el nodo seleccionado para preparar una rama.")
-        tk.Label(self.theory_board_controls, textvariable=self.theory_status_var, anchor="w", wraplength=420).grid(
-            row=0, column=0, columnspan=3, sticky="ew", padx=4, pady=2
+        self.board_controls = tk.Frame(self.panel_controls)
+        self.board_controls.grid(row=0, column=1, sticky="w")
+
+        self.basic_controls = tk.Frame(self.board_controls)
+        self.basic_controls.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.board_view_toggle_button = tk.Button(
+            self.basic_controls,
+            width=4,
+            font=("Arial", 14, "bold"),
+            command=self.toggle_board_view,
         )
+        self.board_view_toggle_button.grid(row=0, column=1, padx=2, pady=(0, 2))
+        self.new_button = tk.Button(self.basic_controls, text="New Game", command=self.new_game)
+        self.new_button.grid(row=1, column=0, padx=2, pady=2)
+        self.load_button = tk.Button(self.basic_controls, text="Load Game", command=self.load_game)
+        self.load_button.grid(row=1, column=1, padx=2, pady=2)
+        self.save_button = tk.Button(self.basic_controls, text="Save Game", command=self.save_game)
+        self.save_button.grid(row=1, column=2, padx=2, pady=2)
+        self._sync_board_view_toggle_button()
+
+        self.theory_board_controls = tk.LabelFrame(self.board_controls, text="Teoría desde tablero")
+        self.theory_board_controls.grid(row=0, column=1, sticky="w", padx=(6, 0), pady=0)
+        self.theory_status_var = tk.StringVar(value="Mueve una pieza desde el nodo seleccionado para preparar una rama.")
         self.add_theory_node_button = tk.Button(
             self.theory_board_controls,
             text="Agregar nodo",
             command=self.add_theory_node_from_board,
             state="disabled",
         )
-        self.add_theory_node_button.grid(row=1, column=0, padx=2, pady=2)
+        self.add_theory_node_button.grid(row=0, column=0, padx=2, pady=2)
         self.prepare_theory_move_button = tk.Button(
             self.theory_board_controls,
             text="Nueva jugada",
             command=self.prepare_theory_move_from_board,
             state="disabled",
         )
-        self.prepare_theory_move_button.grid(row=1, column=1, padx=2, pady=2)
+        self.prepare_theory_move_button.grid(row=0, column=1, padx=2, pady=2)
         self.cancel_theory_move_button = tk.Button(
             self.theory_board_controls,
-            text="Cancelar jugada",
+            text="Cancelar",
             command=self.cancel_theory_board_move,
             state="disabled",
         )
-        self.cancel_theory_move_button.grid(row=1, column=2, padx=2, pady=2)
+        self.cancel_theory_move_button.grid(row=0, column=2, padx=2, pady=2)
         self.theory_board_controls.grid_remove()
 
     def draw_moves(self, see_beginning: bool = False, see_end: bool = True) -> None:
@@ -701,7 +703,7 @@ class ChessUI:
 
 
     def open_theory_panel(self) -> None:
-        self.set_correspondence_clock()
+        self._enter_theory_mode()
         if self.theory_window is not None and self.theory_window.exists():
             self.theory_window.set_board_rotation(self.rotation)
             self.theory_window.focus()
@@ -715,14 +717,9 @@ class ChessUI:
             on_close=self._on_theory_window_close,
             on_move_draft_changed=self.refresh_theory_board_controls,
             preview_piece_images=self.preview_pieces,
-            navigation_mode_var=self.theory_navigation_mode_var,
             board_rotation=self.rotation,
         )
         self.show_theory_board_controls()
-
-    def set_theory_navigation_mode(self) -> None:
-        if self.theory_window is not None and self.theory_window.exists():
-            self.theory_window.set_navigation_mode(self.theory_navigation_mode_var.get())
 
     def _on_theory_board_changed(self) -> None:
         self.refresh_board()
@@ -731,6 +728,41 @@ class ChessUI:
     def _on_theory_window_close(self) -> None:
         self.theory_window = None
         self.hide_theory_board_controls()
+        self._exit_theory_mode()
+
+    def _enter_theory_mode(self) -> None:
+        self._theory_mode_active = True
+        self.set_correspondence_clock()
+        self._apply_main_layout_mode()
+
+    def _exit_theory_mode(self) -> None:
+        self._theory_mode_active = False
+        self.reset_selected_clock_for_game()
+        self._apply_main_layout_mode()
+
+    def _apply_main_layout_mode(self) -> None:
+        if not hasattr(self, "main_frame"):
+            return
+        if self._theory_mode_active:
+            self.main_frame.columnconfigure(0, weight=0)
+        else:
+            self.main_frame.columnconfigure(0, weight=1)
+        self.master.after_idle(self._fit_main_window_to_mode)
+
+    def _fit_main_window_to_mode(self) -> None:
+        if not self.master.winfo_exists():
+            return
+        self.master.update_idletasks()
+        if self._theory_mode_active:
+            required_width = max(self.main_frame.winfo_reqwidth(), 1)
+            required_height = max(self.main_frame.winfo_reqheight(), 1)
+            self.master.minsize(required_width, required_height)
+            self.master.geometry(f"{required_width}x{required_height}")
+            return
+        required_width = max(self._base_window_width, self.master.winfo_reqwidth())
+        required_height = max(self._base_window_height, self.master.winfo_reqheight())
+        self.master.minsize(required_width, required_height)
+        self.master.geometry(f"{required_width}x{required_height}")
 
     def show_theory_board_controls(self) -> None:
         self.theory_board_controls.grid()
@@ -782,9 +814,35 @@ class ChessUI:
     def _theory_has_active_move_draft(self) -> bool:
         return self.theory_window is not None and self.theory_window.exists() and self.theory_window.has_active_move_draft()
 
+    def toggle_board_view(self) -> None:
+        self.set_board_view("white" if self.rotation else "black")
+
+    def _sync_board_view_toggle_button(self) -> None:
+        if not hasattr(self, "board_view_toggle_button"):
+            return
+        if self.rotation:
+            self.board_view_toggle_button.config(
+                text="♟",
+                bg="#111111",
+                fg="#ffffff",
+                activebackground="#333333",
+                activeforeground="#ffffff",
+                relief="raised",
+            )
+        else:
+            self.board_view_toggle_button.config(
+                text="♙",
+                bg="#ffffff",
+                fg="#111111",
+                activebackground="#eeeeee",
+                activeforeground="#111111",
+                relief="raised",
+            )
+
     def set_board_view(self, view: str) -> None:
         self.rotation = view == "black"
         self.board_view_var.set("black" if self.rotation else "white")
+        self._sync_board_view_toggle_button()
         self.cols_str = ["a", "b", "c", "d", "e", "f", "g", "h"]
         if self.rotation:
             self.cols_str = self.cols_str[::-1]
@@ -862,7 +920,9 @@ class ChessUI:
 
     def _render_clock(self) -> None:
         snapshot = self.clock.snapshot()
-        if not snapshot.visible:
+        visible = bool(snapshot.visible and not self._theory_mode_active)
+        self._set_clock_panel_visible(visible)
+        if not visible:
             self.offboard.itemconfig(self.clock_white_id, text="", state="hidden")
             self.offboard.itemconfig(self.clock_black_id, text="", state="hidden")
             self.offboard.itemconfig(self.clock_status_id, text="", state="hidden")
@@ -883,6 +943,20 @@ class ChessUI:
             text=snapshot.status_label(),
             state="normal",
         )
+
+    def _set_clock_panel_visible(self, visible: bool) -> None:
+        if self._clock_panel_visible == visible:
+            return
+        self._clock_panel_visible = visible
+        if visible:
+            self.offboard.grid(row=0, column=0)
+            if hasattr(self, "controls_spacer"):
+                self.controls_spacer.config(width=self.cell_size * 3)
+        else:
+            self.offboard.grid_remove()
+            if hasattr(self, "controls_spacer"):
+                self.controls_spacer.config(width=0)
+        self._apply_main_layout_mode()
 
     def refresh_board(self) -> None:
         self.board.delete("all")

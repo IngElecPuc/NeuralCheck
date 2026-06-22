@@ -22,7 +22,6 @@ class TheoryWindow:
         on_close: Optional[Callable[[], None]] = None,
         on_move_draft_changed: Optional[Callable[[], None]] = None,
         preview_piece_images: Optional[Mapping[str, tk.PhotoImage]] = None,
-        navigation_mode_var: Optional[tk.StringVar] = None,
         board_rotation: bool = False,
     ):
         self.master = master
@@ -32,7 +31,8 @@ class TheoryWindow:
         self.on_move_draft_changed = on_move_draft_changed
         self.preview_piece_images = dict(preview_piece_images or {})
         self.board_rotation = bool(board_rotation)
-        self.navigation_mode_var = navigation_mode_var or tk.StringVar(master, value="fixed")
+        self.entries_visible = True
+        self._entries_panel_width = 0
         self.book_index: Dict[int, str] = {}
 
         self.window = tk.Toplevel(master)
@@ -156,8 +156,10 @@ class TheoryWindow:
         header.columnconfigure(1, weight=2)
         self.source_var = tk.StringVar(value="Sin entrada seleccionada")
         self.path_var = tk.StringVar(value="Ruta: —")
+        self.entries_toggle_var = tk.StringVar(value="Ocultar entradas")
         tk.Label(header, textvariable=self.source_var, anchor="w").grid(row=0, column=0, sticky="ew", padx=(0, 12))
-        tk.Label(header, textvariable=self.path_var, anchor="w").grid(row=0, column=1, sticky="ew")
+        tk.Label(header, textvariable=self.path_var, anchor="w").grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        tk.Button(header, textvariable=self.entries_toggle_var, command=self.toggle_entries_panel).grid(row=0, column=2, sticky="e")
 
         child_form = tk.LabelFrame(self.main_frame, text="Agregar continuación desde el nodo seleccionado")
         child_form.grid(row=1, column=0, sticky="ew", padx=4, pady=4)
@@ -188,7 +190,6 @@ class TheoryWindow:
             self.map_frame,
             self.controller,
             on_node_selected=self._open_map_node,
-            navigation_mode_var=self.navigation_mode_var,
             on_parent_requested=self.open_parent_node,
             on_first_child_requested=self.open_first_child,
             on_previous_sibling_requested=lambda: self._navigate_sibling(-1),
@@ -200,7 +201,7 @@ class TheoryWindow:
         )
         self.theory_map.grid(row=0, column=0, sticky="nsew")
 
-        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter cargar nodo seleccionado. Colores: padre azul · hijos verde · hermanos lila."
+        hint = "Teclado: ↑ padre · ↓ primer hijo · ←/→ hermanos · Enter cargar nodo · Ctrl+Z/Y layout. Colores: padre azul · hijos verde · hermanos lila."
         tk.Label(self.main_frame, text=hint, anchor="w").grid(row=4, column=0, sticky="ew", padx=4, pady=(0, 2))
 
     def _bind_keys(self) -> None:
@@ -211,9 +212,31 @@ class TheoryWindow:
         self.window.bind("<Return>", lambda event: self.load_selected_node_to_board())
 
     def set_navigation_mode(self, mode: str) -> None:
-        self.navigation_mode_var.set(mode)
-        if hasattr(self, "theory_map"):
-            self.theory_map.set_navigation_mode(mode)
+        del mode
+        return
+
+    def toggle_entries_panel(self) -> None:
+        self.set_entries_visible(not self.entries_visible)
+
+    def set_entries_visible(self, visible: bool) -> None:
+        self.window.update_idletasks()
+        if visible == self.entries_visible:
+            return
+        current_width = max(self.window.winfo_width(), 1)
+        current_height = max(self.window.winfo_height(), 1)
+        if not visible:
+            self._entries_panel_width = max(self.books_frame.winfo_width(), 220)
+            self.books_frame.grid_remove()
+            self.entries_visible = False
+            self.entries_toggle_var.set("Mostrar entradas")
+            self.window.minsize(760, 620)
+            self.window.geometry(f"{max(760, current_width - self._entries_panel_width)}x{current_height}")
+        else:
+            self.books_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+            self.entries_visible = True
+            self.entries_toggle_var.set("Ocultar entradas")
+            self.window.minsize(960, 620)
+            self.window.geometry(f"{current_width + max(self._entries_panel_width, 220)}x{current_height}")
 
     def set_board_rotation(self, rotation: bool) -> None:
         self.board_rotation = bool(rotation)

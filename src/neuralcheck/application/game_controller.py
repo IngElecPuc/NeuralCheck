@@ -715,7 +715,8 @@ class GameController:
         if "=" not in move:
             return move, None
 
-        move_without_promotion, promotion_code = move.split("=", 1)
+        move_without_promotion, promotion_suffix = move.split("=", 1)
+        promotion_code = promotion_suffix.replace("+", "").replace("#", "")[:1]
         promotion_map = {"Q": "queen", "R": "rook", "N": "knight", "B": "bishop"}
         promotion_piece = promotion_map.get(promotion_code)
         if promotion_piece is None:

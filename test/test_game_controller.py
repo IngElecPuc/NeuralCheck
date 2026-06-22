@@ -49,3 +49,33 @@ def test_controller_history_rows_hide_chessboard_history_shape():
     assert rows[0].turn_number == 1
     assert rows[0].white_move == "e4"
     assert rows[0].black_move == ""
+
+def test_controller_replays_capture_promotion_with_check_suffix():
+    controller = GameController()
+    moves = [
+        "d4",
+        "d5",
+        "c4",
+        "e5",
+        "dxe5",
+        "d4",
+        "e3",
+        "Bb4+",
+        "Bd2",
+        "dxe3",
+        "Bxb4",
+        "exf2+",
+        "Ke2",
+        "fxg1=N+",
+    ]
+
+    result = controller.load_line_from_initial(moves)
+
+    assert result.valid is True
+    assert result.errors == ()
+    assert controller.piece_at("g1") == "black knight"
+    assert controller.active_color == "white"
+    assert controller.current_fen(include_state=True).startswith(
+        "rnbqk1nr/ppp2ppp/8/4P3/1BP5/8/PP2K1PP/RN1Q1BnR w"
+    )
+
