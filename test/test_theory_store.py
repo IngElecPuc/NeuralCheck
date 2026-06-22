@@ -9,7 +9,7 @@ from neuralcheck.theory.sqlite_store import SQLiteTheoryGraphStore
 
 
 INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1"
-AFTER_E4_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b - - 0 1"
+AFTER_E4_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b - e3 0 1"
 AFTER_C5_FEN = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w - - 0 1"
 AFTER_NF3_FEN = "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b - - 0 1"
 AFTER_C3_FEN = "rnbqkbnr/pp1ppppp/8/2p5/4P3/2P5/PP1P1PPP/RNBQKBNR b - - 0 1"
@@ -157,7 +157,7 @@ def test_add_child_by_move_generates_child_fen_from_parent(service: TheoryServic
     bc4 = service.add_child_by_move(nc6.node.id, "Bc4", name="Italiana")
 
     assert e4.node.fen == AFTER_E4_FEN
-    assert e5.node.fen == "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w - - 0 1"
+    assert e5.node.fen == "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w - e6 0 1"
     assert bc4.node.side_to_move == "black"
     assert bc4.node.fen == "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b - - 0 1"
 
@@ -298,3 +298,18 @@ def test_controller_updates_selected_node_metadata(tmp_path: Path):
         assert updated.captured_pieces == "sin capturas"
     finally:
         theory_controller.close()
+
+
+def test_add_child_by_move_preserves_en_passant_in_theory_nodes(service: TheoryService):
+    book = service.create_book("En passant")
+    root = service.create_root(book.id, INITIAL_FEN, name="Inicial")
+
+    e4 = service.add_child_by_move(root.id, "e4")
+    a6 = service.add_child_by_move(e4.node.id, "a6")
+    e5 = service.add_child_by_move(a6.node.id, "e5")
+    d5 = service.add_child_by_move(e5.node.id, "d5")
+    exd6 = service.add_child_by_move(d5.node.id, "exd6")
+
+    assert d5.node.fen == "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w - d6 0 1"
+    assert exd6.node.fen == "rnbqkbnr/1pp1pppp/p2P4/8/8/8/PPPP1PPP/RNBQKBNR b - - 0 1"
+    assert exd6.edge.move_san == "exd6"

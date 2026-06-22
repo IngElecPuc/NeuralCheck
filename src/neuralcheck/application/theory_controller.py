@@ -520,6 +520,26 @@ class TheoryController:
             return []
         return self.service.get_children(target_node_id)
 
+    def find_child_by_move(self, move_san: Optional[str], node_id: Optional[str] = None) -> Optional[TheoryBranch]:
+        """Return the child branch reached by ``move_san`` from the selected node.
+
+        Board moves can contain check or mate suffixes even when stored theory
+        relations do not. The comparison keeps disambiguation and promotion
+        pieces, but ignores trailing check/mate markers.
+        """
+        target_node_id = node_id or self._selected_node_id
+        if target_node_id is None or not move_san:
+            return None
+        move_key = self._move_match_key(move_san)
+        for branch in self.service.get_children(target_node_id):
+            if self._move_match_key(branch.edge.move_san) == move_key:
+                return branch
+        return None
+
+    @staticmethod
+    def _move_match_key(move_san: str) -> str:
+        return str(move_san).strip().replace("+", "").replace("#", "")
+
     def get_parent_branch(self, node_id: Optional[str] = None) -> Optional[TheoryBranch]:
         target_node_id = node_id or self._selected_node_id
         if target_node_id is None:

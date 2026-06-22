@@ -32,6 +32,7 @@ class TheoryWindow:
         self.preview_piece_images = dict(preview_piece_images or {})
         self.board_rotation = bool(board_rotation)
         self.entries_visible = True
+        self.auto_save_from_board = False
         self._entries_panel_width = 0
         self.book_index: Dict[int, str] = {}
 
@@ -61,15 +62,59 @@ class TheoryWindow:
         return self.controller.get_move_draft() is not None
 
     def register_board_move(self, move_san: Optional[str]) -> bool:
-        """Register one board move as a pending theory draft."""
+        """Register one board move against the selected theory node.
+
+        Existing continuations are followed immediately. New continuations become
+        a draft unless automatic saving is enabled from the main board controls.
+        """
         if not move_san:
             return False
+
+        existing_branch = self.controller.find_child_by_move(move_san)
+        if existing_branch is not None:
+            validation = self.controller.load_node_to_board(existing_branch.node.id)
+            if not validation.valid:
+                messagebox.showerror(
+                    "No se pudo sincronizar el tablero",
+                    "\n".join(validation.errors),
+                    parent=self.window,
+                )
+                return False
+            self.controller.clear_move_draft()
+            self._clear_child_form(only_move_if_matching=False)
+            self.status_var.set(f"Continuación existente cargada: {existing_branch.edge.move_san}")
+            self._notify_board_changed()
+            self._notify_move_draft_changed()
+            self.refresh_all()
+            return True
+
         try:
             draft = self.controller.create_move_draft_from_board_move(move_san)
         except Exception as exc:
             messagebox.showerror("No se pudo preparar la jugada", str(exc), parent=self.window)
             self._restore_selected_node_after_failed_draft()
             return False
+
+        if self.auto_save_from_board:
+            try:
+                branch = self.controller.commit_move_draft()
+                validation = self.controller.load_node_to_board(branch.node.id)
+            except Exception as exc:
+                messagebox.showerror("No se pudo guardar la continuación", str(exc), parent=self.window)
+                return False
+            if not validation.valid:
+                messagebox.showerror(
+                    "No se pudo sincronizar el tablero",
+                    "\n".join(validation.errors),
+                    parent=self.window,
+                )
+                return False
+            self._clear_child_form(only_move_if_matching=False)
+            self.status_var.set(f"Continuación guardada automáticamente: {branch.edge.move_san}")
+            self._notify_board_changed()
+            self._notify_move_draft_changed()
+            self.refresh_all()
+            return True
 
         self.status_var.set(
             f"Jugada preparada desde el tablero: {draft.move_san}. "
@@ -242,6 +287,11 @@ class TheoryWindow:
         self.board_rotation = bool(rotation)
         if hasattr(self, "theory_map"):
             self.theory_map.set_board_rotation(self.board_rotation)
+
+    def set_auto_save_from_board(self, enabled: bool) -> None:
+        self.auto_save_from_board = bool(enabled)
+        if hasattr(self, "theory_map"):
+            self.theory_map.set_auto_save_layout(self.auto_save_from_board)
 
     def refresh_all(self) -> None:
         self.refresh_books()

@@ -396,6 +396,7 @@ class TheoryMapCanvas(tk.Frame):
         self._redo_stack: list[Dict[str, Tuple[float, float]]] = []
         self._layout_dirty = False
         self._force_auto_layout = False
+        self._auto_save_layout = False
         self.layout_status_var = tk.StringVar(value="")
         self.node_positions: Dict[str, Tuple[float, float]] = {}
         self.node_roles: Dict[str, str] = {}
@@ -529,6 +530,9 @@ class TheoryMapCanvas(tk.Frame):
 
     def set_board_rotation(self, rotation: bool) -> None:
         self.board_rotation = bool(rotation)
+
+    def set_auto_save_layout(self, enabled: bool) -> None:
+        self._auto_save_layout = bool(enabled)
 
     def _base_node_radius(self) -> float:
         return 38.0
@@ -1302,10 +1306,13 @@ class TheoryMapCanvas(tk.Frame):
         self.refresh(force_layout=False)
 
     def _finish_left_interaction(self) -> None:
+        edited_layout = self._node_drag_id is not None or bool(self._subtree_drag_ids)
         self._node_drag_id = None
         self._node_drag_previous = None
         self._subtree_drag_ids = set()
         self._clear_left_drag()
+        if edited_layout and self._auto_save_layout and self._layout_dirty:
+            self.save_layout()
 
     def _clear_left_drag(self) -> None:
         self._last_drag = None

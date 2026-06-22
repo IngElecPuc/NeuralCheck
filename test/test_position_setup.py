@@ -189,3 +189,23 @@ def test_position_editor_palette_is_visual_4x4_grid():
         "black knight",
         "black pawn",
     }
+
+
+def test_history_navigation_preserves_en_passant_target_for_new_games():
+    controller = GameController()
+    for origin, target in (("e2", "e4"), ("a7", "a6"), ("e4", "e5"), ("d7", "d5")):
+        controller.click_square(origin)
+        result = controller.click_square(target)
+        assert result.moved
+
+    assert controller.jump_to_move(1, False) is True
+    assert controller.active_color == "white"
+    assert "d6" in controller.legal_targets("e5")
+
+    controller.click_square("e5")
+    result = controller.click_square("d6")
+
+    assert result.moved
+    assert result.movement == "exd6"
+    assert controller.piece_at("d5").startswith("Empty")
+    assert controller.piece_at("d6") == "white pawn"

@@ -156,3 +156,49 @@ def test_san_disambiguation_rejects_wrong_origin_file_for_ambiguous_knights():
         assert "disambiguation" in str(exc)
     else:
         raise AssertionError("Ncf6 should not resolve when no knight on c-file can move to f6")
+
+
+def test_fen_en_passant_target_enables_white_capture():
+    board = ChessBoard()
+    board.set_position_from_fen(
+        "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w - d6 0 1",
+        clear_history=True,
+    )
+
+    assert board.en_passant_target == "d6"
+    assert "d6" in board.possible_moves["white"]["e5"]
+    assert board.read_move("exd6", white_player=True) == ("white pawn", "e5", "d6")
+    assert board.make_move("white pawn", "e5", "d6") == (True, "exd6")
+    assert board.what_in("d5").startswith("Empty")
+    assert board.what_in("d6") == "white pawn"
+    assert board.en_passant_target is None
+    assert board.export_fen(include_state=True).endswith(" b - - 0 1")
+
+
+def test_fen_en_passant_target_enables_black_capture():
+    board = ChessBoard()
+    board.set_position_from_fen(
+        "rnbqkbnr/pppp1ppp/8/8/3pP3/8/PPP2PPP/RNBQKBNR b - e3 0 1",
+        clear_history=True,
+    )
+
+    assert board.en_passant_target == "e3"
+    assert "e3" in board.possible_moves["black"]["d4"]
+    assert board.read_move("dxe3", white_player=False) == ("black pawn", "d4", "e3")
+    assert board.make_move("black pawn", "d4", "e3") == (True, "dxe3")
+    assert board.what_in("e4").startswith("Empty")
+    assert board.what_in("e3") == "black pawn"
+
+
+def test_double_pawn_push_exports_en_passant_target_and_clears_after_next_move():
+    board = ChessBoard()
+
+    assert board.make_move("white pawn", "e2", "e4") == (True, "e4")
+    assert board.en_passant_target == "e3"
+    assert board.export_fen(include_state=True) == (
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b - e3 0 1"
+    )
+
+    assert board.make_move("black knight", "g8", "f6") == (True, "Nf6")
+    assert board.en_passant_target is None
+    assert board.export_fen(include_state=True).endswith(" w - - 0 1")

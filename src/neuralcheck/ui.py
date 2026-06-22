@@ -20,6 +20,7 @@ from neuralcheck.application.clock import (
 )
 from neuralcheck.application.game_controller import GameController, MoveAttempt
 from neuralcheck.application.theory_controller import TheoryController
+from neuralcheck.board_overlays import BoardArrow, is_knight_jump
 from neuralcheck.ui_position_editor import PositionEditorWindow
 from neuralcheck.ui_theory import TheoryWindow
 
@@ -57,11 +58,16 @@ class ChessUI:
         self.coordinates = True
         self.coordinates_var = tk.BooleanVar(master, value=True)
         self.board_view_var = tk.StringVar(master, value="black" if self.rotation else "white")
+        self.history_visible_var = tk.BooleanVar(master, value=True)
         self.theory_continuation_arrows_var = tk.BooleanVar(master, value=True)
+        self.theory_auto_save_var = tk.BooleanVar(master, value=False)
         self._theory_mode_active = False
         self._clock_panel_visible: Optional[bool] = None
         self._base_window_width = 0
         self._base_window_height = 0
+        self.manual_board_arrows: list[BoardArrow] = []
+        self._board_arrow_drag_origin: Optional[str] = None
+        self._board_arrow_drag_target: Optional[str] = None
 
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
@@ -80,6 +86,9 @@ class ChessUI:
         self.draw_board()
         self.draw_moves(see_end=False)
         self.board.bind("<Button-1>", self.on_click)
+        self.board.bind("<ButtonPress-3>", self.on_board_arrow_start)
+        self.board.bind("<B3-Motion>", self.on_board_arrow_motion)
+        self.board.bind("<ButtonRelease-3>", self.on_board_arrow_release)
         self.start_clock()
 
     def _load_config(self) -> dict:
@@ -189,6 +198,12 @@ class ChessUI:
             variable=self.board_view_var,
             value="black",
             command=lambda: self.set_board_view("black"),
+        )
+        view_menu.add_separator()
+        view_menu.add_checkbutton(
+            label="Mostrar historial",
+            variable=self.history_visible_var,
+            command=self.toggle_history_panel,
         )
 
     def _build_layout(self, master) -> None:
@@ -324,25 +339,44 @@ class ChessUI:
         self.theory_status_var = tk.StringVar(value="Mueve una pieza desde el nodo seleccionado para preparar una rama.")
         self.add_theory_node_button = tk.Button(
             self.theory_board_controls,
-            text="Agregar nodo",
+            text="Agregar",
             command=self.add_theory_node_from_board,
             state="disabled",
+            width=10,
         )
-        self.add_theory_node_button.grid(row=0, column=0, padx=2, pady=2)
+        self.add_theory_node_button.grid(row=0, column=0, sticky="ew", padx=2, pady=2)
         self.prepare_theory_move_button = tk.Button(
             self.theory_board_controls,
-            text="Nueva jugada",
+            text="Nueva",
             command=self.prepare_theory_move_from_board,
             state="disabled",
+            width=10,
         )
-        self.prepare_theory_move_button.grid(row=0, column=1, padx=2, pady=2)
+        self.prepare_theory_move_button.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        self.auto_theory_save_button = tk.Button(
+            self.theory_board_controls,
+            text="Auto OFF",
+            command=self.toggle_theory_auto_save,
+            width=10,
+        )
+        self._auto_theory_save_default_style = {
+            "bg": self.auto_theory_save_button.cget("background"),
+            "fg": self.auto_theory_save_button.cget("foreground"),
+            "activebackground": self.auto_theory_save_button.cget("activebackground"),
+            "activeforeground": self.auto_theory_save_button.cget("activeforeground"),
+        }
+        self.auto_theory_save_button.grid(row=1, column=0, sticky="ew", padx=2, pady=2)
         self.cancel_theory_move_button = tk.Button(
             self.theory_board_controls,
             text="Cancelar",
             command=self.cancel_theory_board_move,
             state="disabled",
+            width=10,
         )
-        self.cancel_theory_move_button.grid(row=0, column=2, padx=2, pady=2)
+        self.cancel_theory_move_button.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        self.theory_board_controls.columnconfigure(0, weight=1)
+        self.theory_board_controls.columnconfigure(1, weight=1)
+        self._sync_theory_auto_save_button()
         self.theory_board_controls.grid_remove()
 
     def draw_moves(self, see_beginning: bool = False, see_end: bool = True) -> None:
@@ -397,7 +431,7 @@ class ChessUI:
                 self.board.create_rectangle(x1, y1, x2, y2, fill=color)
 
         self._draw_pieces()
-        self._draw_theory_continuation_arrows()
+        self._draw_board_overlays()
         self._draw_selection()
         self._draw_coordinates()
 
@@ -469,6 +503,11 @@ class ChessUI:
             width=3,
         )
 
+    def _draw_board_overlays(self) -> None:
+        self._draw_theory_continuation_arrows()
+        self._draw_manual_board_arrows()
+        self._draw_board_arrow_preview()
+
     def _draw_theory_continuation_arrows(self) -> None:
         if not self.theory_continuation_arrows_var.get():
             return
@@ -485,7 +524,38 @@ class ChessUI:
                 continue
             self._draw_board_arrow(hint.from_square, hint.to_square)
 
-    def _draw_board_arrow(self, from_square: str, to_square: str) -> None:
+    def _draw_manual_board_arrows(self) -> None:
+        for arrow in self.manual_board_arrows:
+            self._draw_board_arrow(
+                arrow.from_square,
+                arrow.to_square,
+                color=arrow.color,
+                halo_color=arrow.halo_color,
+            )
+
+    def _draw_board_arrow_preview(self) -> None:
+        if self._board_arrow_drag_origin is None or self._board_arrow_drag_target is None:
+            return
+        if self._board_arrow_drag_origin == self._board_arrow_drag_target:
+            return
+        self._draw_board_arrow(
+            self._board_arrow_drag_origin,
+            self._board_arrow_drag_target,
+            color="#d97706",
+            halo_color="#fde68a",
+        )
+
+    def _draw_board_arrow(
+        self,
+        from_square: str,
+        to_square: str,
+        *,
+        color: str = "#e0a800",
+        halo_color: str = "#f6d065",
+    ) -> None:
+        if is_knight_jump(from_square, to_square):
+            self._draw_knight_board_arrow(from_square, to_square, color=color, halo_color=halo_color)
+            return
         x1, y1 = self._square_center(from_square)
         x2, y2 = self._square_center(to_square)
         dx = x2 - x1
@@ -499,26 +569,86 @@ class ChessUI:
         end_x = x2 - ux * margin
         end_y = y2 - uy * margin
         width = max(5, int(self.cell_size * 0.13))
-        self.board.create_line(
-            start_x,
-            start_y,
-            end_x,
-            end_y,
-            fill="#f6d065",
-            width=width + 4,
-            arrow=tk.LAST,
-            arrowshape=(20, 24, 8),
-        )
-        self.board.create_line(
-            start_x,
-            start_y,
-            end_x,
-            end_y,
-            fill="#e0a800",
+        self._draw_arrow_line(
+            ((start_x, start_y), (end_x, end_y)),
+            color=color,
+            halo_color=halo_color,
             width=width,
-            arrow=tk.LAST,
-            arrowshape=(18, 22, 7),
         )
+
+    def _draw_knight_board_arrow(
+        self,
+        from_square: str,
+        to_square: str,
+        *,
+        color: str = "#e0a800",
+        halo_color: str = "#f6d065",
+    ) -> None:
+        x1, y1 = self._square_center(from_square)
+        x2, y2 = self._square_center(to_square)
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) >= abs(dy):
+            elbow = (x2, y1)
+        else:
+            elbow = (x1, y2)
+
+        margin = self.cell_size * 0.22
+        first_start = self._point_toward((x1, y1), elbow, margin)
+        final_end = self._point_toward((x2, y2), elbow, margin)
+        width = max(5, int(self.cell_size * 0.13))
+        self._draw_arrow_line(
+            (first_start, elbow, final_end),
+            color=color,
+            halo_color=halo_color,
+            width=width,
+        )
+
+    def _draw_arrow_line(
+        self,
+        points: Tuple[Tuple[float, float], ...],
+        *,
+        color: str,
+        halo_color: str,
+        width: int,
+    ) -> None:
+        if len(points) < 2:
+            return
+        for index, (start, end) in enumerate(zip(points, points[1:])):
+            arrow = tk.LAST if index == len(points) - 2 else tk.NONE
+            self.board.create_line(
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                fill=halo_color,
+                width=width + 4,
+                arrow=arrow,
+                arrowshape=(20, 24, 8),
+            )
+        for index, (start, end) in enumerate(zip(points, points[1:])):
+            arrow = tk.LAST if index == len(points) - 2 else tk.NONE
+            self.board.create_line(
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                fill=color,
+                width=width,
+                arrow=arrow,
+                arrowshape=(18, 22, 7),
+            )
+
+    def _point_toward(
+        self,
+        point: Tuple[float, float],
+        target: Tuple[float, float],
+        distance: float,
+    ) -> Tuple[float, float]:
+        dx = target[0] - point[0]
+        dy = target[1] - point[1]
+        norm = max((dx * dx + dy * dy) ** 0.5, 1.0)
+        return point[0] + dx / norm * distance, point[1] + dy / norm * distance
 
     def _square_center(self, position: str) -> Tuple[float, float]:
         x, y = self._translate_position_logic2px(position)
@@ -649,6 +779,47 @@ class ChessUI:
         self.master.wait_window(popup)
         return selected_piece
 
+    def on_board_arrow_start(self, event: tk.Event) -> None:
+        origin = self._translate_position_px2logic(event.x, event.y)
+        self._board_arrow_drag_origin = origin
+        self._board_arrow_drag_target = origin
+        if origin is not None:
+            self.board.focus_set()
+
+    def on_board_arrow_motion(self, event: tk.Event) -> None:
+        if self._board_arrow_drag_origin is None:
+            return
+        target = self._translate_position_px2logic(event.x, event.y)
+        if target == self._board_arrow_drag_target:
+            return
+        self._board_arrow_drag_target = target
+        self.refresh_board()
+
+    def on_board_arrow_release(self, event: tk.Event) -> None:
+        origin = self._board_arrow_drag_origin
+        target = self._translate_position_px2logic(event.x, event.y)
+        self._board_arrow_drag_origin = None
+        self._board_arrow_drag_target = None
+        if origin is None or target is None:
+            self.refresh_board()
+            return
+        if origin == target:
+            self._clear_manual_board_arrows()
+            self.refresh_board()
+            return
+
+        arrow = BoardArrow(origin, target)
+        if arrow in self.manual_board_arrows:
+            self.manual_board_arrows = [existing for existing in self.manual_board_arrows if existing != arrow]
+        else:
+            self.manual_board_arrows.append(arrow)
+        self.refresh_board()
+
+    def _clear_manual_board_arrows(self) -> None:
+        self.manual_board_arrows.clear()
+        self._board_arrow_drag_origin = None
+        self._board_arrow_drag_target = None
+
     def on_click(self, event: tk.Event) -> None:
         target_position = self._translate_position_px2logic(event.x, event.y)
         if target_position is None:
@@ -660,6 +831,7 @@ class ChessUI:
 
         result = self.controller.click_square(target_position, promotion_provider=self.pawn_promotion)
         if result.moved:
+            self._clear_manual_board_arrows()
             self._on_live_move_completed(result)
             self._register_theory_board_move(result)
             self.draw_moves()
@@ -693,11 +865,13 @@ class ChessUI:
         )
 
     def _on_position_editor_apply(self) -> None:
+        self._clear_manual_board_arrows()
         self.refresh_board()
         self.draw_moves(see_beginning=True, see_end=False)
 
     def jump_to_move(self, turn_index: int, white_player: bool) -> None:
         if self.controller.jump_to_move(turn_index, white_player):
+            self._clear_manual_board_arrows()
             self.refresh_board()
             self.draw_moves(see_end=False)
 
@@ -706,6 +880,7 @@ class ChessUI:
         self._enter_theory_mode()
         if self.theory_window is not None and self.theory_window.exists():
             self.theory_window.set_board_rotation(self.rotation)
+            self.theory_window.set_auto_save_from_board(self.theory_auto_save_var.get())
             self.theory_window.focus()
             self.show_theory_board_controls()
             return
@@ -719,9 +894,11 @@ class ChessUI:
             preview_piece_images=self.preview_pieces,
             board_rotation=self.rotation,
         )
+        self.theory_window.set_auto_save_from_board(self.theory_auto_save_var.get())
         self.show_theory_board_controls()
 
     def _on_theory_board_changed(self) -> None:
+        self._clear_manual_board_arrows()
         self.refresh_board()
         self.draw_moves(see_beginning=True, see_end=False)
 
@@ -743,7 +920,8 @@ class ChessUI:
     def _apply_main_layout_mode(self) -> None:
         if not hasattr(self, "main_frame"):
             return
-        if self._theory_mode_active:
+        self._set_history_panel_visible(self.history_visible_var.get(), schedule_fit=False)
+        if self._theory_mode_active or not self.history_visible_var.get():
             self.main_frame.columnconfigure(0, weight=0)
         else:
             self.main_frame.columnconfigure(0, weight=1)
@@ -753,7 +931,8 @@ class ChessUI:
         if not self.master.winfo_exists():
             return
         self.master.update_idletasks()
-        if self._theory_mode_active:
+        compact_width = self._theory_mode_active or not self.history_visible_var.get()
+        if compact_width:
             required_width = max(self.main_frame.winfo_reqwidth(), 1)
             required_height = max(self.main_frame.winfo_reqheight(), 1)
             self.master.minsize(required_width, required_height)
@@ -771,7 +950,49 @@ class ChessUI:
     def hide_theory_board_controls(self) -> None:
         self.theory_board_controls.grid_remove()
 
+    def toggle_theory_auto_save(self) -> None:
+        self.theory_auto_save_var.set(not self.theory_auto_save_var.get())
+        self._sync_theory_auto_save_button()
+        if self.theory_window is not None and self.theory_window.exists():
+            self.theory_window.set_auto_save_from_board(self.theory_auto_save_var.get())
+        self.refresh_theory_board_controls()
+
+    def _sync_theory_auto_save_button(self) -> None:
+        if not hasattr(self, "auto_theory_save_button"):
+            return
+        if self.theory_auto_save_var.get():
+            self.auto_theory_save_button.config(
+                text="Auto ON",
+                bg="#dcfce7",
+                fg="#14532d",
+                activebackground="#bbf7d0",
+                activeforeground="#14532d",
+            )
+        else:
+            default_style = getattr(self, "_auto_theory_save_default_style", {})
+            self.auto_theory_save_button.config(
+                text="Auto OFF",
+                bg=default_style.get("bg", self.auto_theory_save_button.cget("background")),
+                fg=default_style.get("fg", self.auto_theory_save_button.cget("foreground")),
+                activebackground=default_style.get("activebackground", self.auto_theory_save_button.cget("activebackground")),
+                activeforeground=default_style.get("activeforeground", self.auto_theory_save_button.cget("activeforeground")),
+            )
+
+    def toggle_history_panel(self) -> None:
+        self._set_history_panel_visible(self.history_visible_var.get(), schedule_fit=True)
+
+    def _set_history_panel_visible(self, visible: bool, *, schedule_fit: bool = True) -> None:
+        if not hasattr(self, "panel_history"):
+            return
+        if visible:
+            self.panel_history.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=10, pady=10)
+        else:
+            self.panel_history.grid_remove()
+        if schedule_fit:
+            self._apply_main_layout_mode()
+
     def refresh_theory_board_controls(self) -> None:
+        self._sync_theory_auto_save_button()
         active = self._theory_has_active_move_draft()
         state = "normal" if active else "disabled"
         self.add_theory_node_button.config(state=state)
@@ -808,6 +1029,7 @@ class ChessUI:
         if self.theory_controller.selected_node_id is None:
             self.theory_status_var.set("Selecciona un nodo de teoría para preparar ramas desde el tablero.")
             return
+        self.theory_window.set_auto_save_from_board(self.theory_auto_save_var.get())
         self.theory_window.register_board_move(result.movement)
         self.refresh_theory_board_controls()
 
@@ -963,6 +1185,7 @@ class ChessUI:
         self.draw_board()
 
     def new_game(self) -> None:
+        self._clear_manual_board_arrows()
         self.controller.new_game()
         self.reset_selected_clock_for_game()
         self.refresh_board()
@@ -977,6 +1200,7 @@ class ChessUI:
         if not filename:
             return
 
+        self._clear_manual_board_arrows()
         self.controller.load_game(filename)
         self.reset_selected_clock_for_game()
         self.refresh_board()
@@ -993,12 +1217,14 @@ class ChessUI:
             self.controller.save_game(filename)
 
     def go_to_first(self) -> None:
+        self._clear_manual_board_arrows()
         self.controller.go_to_first()
         self.refresh_board()
         self.draw_moves(see_beginning=True, see_end=False)
 
     def previous_step(self) -> None:
         if self.controller.previous_step():
+            self._clear_manual_board_arrows()
             self.refresh_board()
             self.draw_moves(see_end=False)
 
@@ -1007,15 +1233,18 @@ class ChessUI:
         if not result.moved and result.invalid_reason not in {"no_replay_move"}:
             self._print_invalid_move(result)
 
+        self._clear_manual_board_arrows()
         self.refresh_board()
         self.draw_moves(see_end=False)
 
     def next_step(self) -> None:
         if self.controller.next_step():
+            self._clear_manual_board_arrows()
             self.refresh_board()
             self.draw_moves(see_end=False)
 
     def go_to_last(self) -> None:
         if self.controller.go_to_last():
+            self._clear_manual_board_arrows()
             self.refresh_board()
             self.draw_moves(see_end=True)

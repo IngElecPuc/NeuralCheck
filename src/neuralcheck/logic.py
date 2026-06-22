@@ -120,6 +120,77 @@ class ChessBoard:
     def _opponent_color(self, color: str) -> str:
         return 'black' if color == 'white' else 'white'
 
+    def _normalize_en_passant_target(self, target: Optional[str]) -> Optional[str]:
+        if target is None or target == '-':
+            return None
+        if not self._position_in_bounds(target):
+            raise ValueError(f"Invalid en-passant target square: {target}")
+        if target[1] not in {'3', '6'}:
+            raise ValueError(f"Invalid en-passant target rank: {target}")
+        return target
+
+    def _en_passant_target_from_last_turn(self, color: str) -> Optional[str]:
+        """Return a legacy en-passant target inferred from ``last_turn``.
+
+        Older code and tests represented the en-passant right only as the last
+        double pawn move. The explicit FEN-backed state now lives in
+        ``en_passant_target``, but this fallback keeps direct ``last_turn``
+        callers compatible.
+        """
+        last_piece, last_initial, last_end = self.last_turn
+        if last_piece is None or last_initial is None or last_end is None:
+            return None
+        if 'pawn' not in last_piece:
+            return None
+        if self._color_from_piece(last_piece) == color:
+            return None
+
+        last_initial_x, last_initial_y = self.logic2array(last_initial)
+        last_end_x, last_end_y = self.logic2array(last_end)
+        if last_initial_y != last_end_y or abs(last_initial_x - last_end_x) != 2:
+            return None
+        if int(self.board[last_end_x, last_end_y]) != self._piece_value(last_piece):
+            return None
+
+        return self.array2logic((last_initial_x + last_end_x) // 2, last_end_y)
+
+    def _current_en_passant_target(self, color: str) -> Optional[str]:
+        return self.en_passant_target or self._en_passant_target_from_last_turn(color)
+
+    def _set_en_passant_after_move(self, piece: str, initial_position: str, end_position: str) -> None:
+        self.en_passant_target = None
+        if 'pawn' not in piece:
+            return
+        initial_x, initial_y = self.logic2array(initial_position)
+        end_x, end_y = self.logic2array(end_position)
+        if initial_y == end_y and abs(initial_x - end_x) == 2:
+            self.en_passant_target = self.array2logic((initial_x + end_x) // 2, initial_y)
+
+    def _is_en_passant_move_on_board(
+        self,
+        board: np.array,
+        piece: str,
+        initial_position: str,
+        end_position: str,
+    ) -> bool:
+        color = self._color_from_piece(piece)
+        if color is None or 'pawn' not in piece:
+            return False
+        initial_x, initial_y = self.logic2array(initial_position)
+        end_x, end_y = self.logic2array(end_position)
+        if initial_y == end_y or int(board[end_x, end_y]) != 0:
+            return False
+
+        target = self._current_en_passant_target(color)
+        if end_position != target:
+            return False
+
+        captured_x = initial_x
+        captured_y = end_y
+        if not (0 <= captured_x < BOARD_SIZE and 0 <= captured_y < BOARD_SIZE):
+            return False
+        return int(board[captured_x, captured_y]) == -self._color_sign(color)
+
     def _color_sign(self, color: str) -> int:
         return 1 if color == 'white' else -1
 
@@ -224,28 +295,23 @@ class ChessBoard:
         return targets
 
     def _en_passant_targets(self, board: np.array, x: int, y: int, color: str) -> List[str]:
-        last_piece, last_initial, last_end = self.last_turn
-        if last_piece is None or last_initial is None or last_end is None:
-            return []
-        if 'pawn' not in last_piece:
-            return []
-        if self._color_from_piece(last_piece) == color:
+        target = self._current_en_passant_target(color)
+        if target is None:
             return []
 
-        last_initial_x, last_initial_y = self.logic2array(last_initial)
-        last_end_x, last_end_y = self.logic2array(last_end)
-        if abs(last_initial_x - last_end_x) != 2:
-            return []
-        if last_end_x != x or abs(last_end_y - y) != 1:
-            return []
-        if int(board[last_end_x, last_end_y]) != self._piece_value(last_piece):
-            return []
-
+        target_x, target_y = self.logic2array(target)
         direction = -1 if color == 'white' else 1
-        target_x = x + direction
-        if 0 <= target_x < BOARD_SIZE:
-            return [self.array2logic(target_x, last_end_y)]
-        return []
+        if target_x != x + direction or abs(target_y - y) != 1:
+            return []
+        if int(board[target_x, target_y]) != 0:
+            return []
+
+        captured_x = x
+        captured_y = target_y
+        if int(board[captured_x, captured_y]) != -self._color_sign(color):
+            return []
+
+        return [target]
 
     def _king_targets(
         self,
@@ -384,7 +450,7 @@ class ChessBoard:
         end_x, end_y = self.logic2array(end_position)
         color = self._color_from_piece(piece)
 
-        if color is not None and 'pawn' in piece and int(board[end_x, end_y]) == 0 and initial_y != end_y:
+        if self._is_en_passant_move_on_board(board, piece, initial_position, end_position):
             # En passant removes the pawn behind the landing square.
             captured_x = initial_x
             captured_y = end_y
@@ -460,6 +526,7 @@ class ChessBoard:
         self.board = np.zeros((BOARD_SIZE,BOARD_SIZE), dtype=np.int64)
         self.history = []
         self.last_turn = (None, None, None)
+        self.en_passant_target: Optional[str] = None
         self.castle_flags = {
             'white king moved': False,
             'black king moved': False,
@@ -777,18 +844,10 @@ class ChessBoard:
 
         movement = self.notation_from_move(piece, initial_position, end_position)
         captured_piece = self.what_in(end_position)
-        last_piece, last_initial, last_end = self.last_turn
         en_passant_capture_square = None
 
-        if (
-            'pawn' in piece
-            and initial_y != end_y
-            and 'Empty' in captured_piece
-            and last_piece is not None
-            and last_initial is not None
-            and last_end is not None
-        ):
-            en_passant_capture_square = last_end
+        if self._is_en_passant_move_on_board(self.board, piece, initial_position, end_position):
+            en_passant_capture_square = self.array2logic(initial_x, end_y)
             captured_piece = self.what_in(en_passant_capture_square)
             movement = initial_position[0] + 'x' + end_position
 
@@ -814,6 +873,7 @@ class ChessBoard:
             movement += '=' + promotions[promote2.split(' ')[1]]
 
         self._update_castle_flags_after_move(piece, initial_position, end_position, captured_piece)
+        self._set_en_passant_after_move(piece, initial_position, end_position)
         self.last_turn = (piece, initial_position, end_position)
         self.white_turn = not self.white_turn
         self._refresh_possible_moves()
@@ -826,7 +886,7 @@ class ChessBoard:
             movement += '#'
 
         if add2history:
-            fen = self.numpy2fen(self.board)
+            fen = self.export_fen(include_state=True)
             if moving_color == 'white':
                 self.history.append([[movement], [fen]])
             elif self.history:
@@ -1056,6 +1116,7 @@ class ChessBoard:
         pieces: Dict[str, str],
         white_turn: bool = True,
         clear_history: bool = True,
+        en_passant_target: Optional[str] = None,
     ) -> None:
         """Replace the current board with an explicit piece map."""
         preserved_history = [] if clear_history else self.history
@@ -1069,6 +1130,7 @@ class ChessBoard:
         self.history = preserved_history
         self.pointer = preserved_pointer
         self.last_turn = (None, None, None)
+        self.en_passant_target = self._normalize_en_passant_target(en_passant_target)
         self._refresh_possible_moves()
 
     def set_position_from_fen(
@@ -1078,8 +1140,8 @@ class ChessBoard:
     ) -> None:
         """Replace the current board from a FEN string.
 
-        Only piece placement and active color are currently preserved. Castling,
-        en-passant and move counters remain outside the current domain contract.
+        Piece placement, active color and en-passant target are preserved.
+        Castling and move counters are still emitted with neutral placeholders.
         """
         fields = fen.strip().split()
         if not fields:
@@ -1091,6 +1153,7 @@ class ChessBoard:
             if fields[1] not in {'w', 'b'}:
                 raise ValueError("FEN active color must be 'w' or 'b'")
             white_turn = fields[1] == 'w'
+        en_passant_target = self._normalize_en_passant_target(fields[3] if len(fields) >= 4 else None)
 
         pieces: Dict[str, str] = {}
         for x in range(BOARD_SIZE):
@@ -1100,20 +1163,26 @@ class ChessBoard:
                     continue
                 pieces[self.array2logic(x, y)] = self._piece_from_value(value)
 
-        self.set_position_from_pieces(pieces, white_turn=white_turn, clear_history=clear_history)
+        self.set_position_from_pieces(
+            pieces,
+            white_turn=white_turn,
+            clear_history=clear_history,
+            en_passant_target=en_passant_target,
+        )
 
     def export_fen(self, include_state: bool = True) -> str:
         """Export the current board as FEN.
 
-        The current engine tracks piece placement and active side. Other FEN
-        fields are emitted with neutral placeholders until castling/en-passant
-        state is promoted to the position contract.
+        The current engine tracks piece placement, active side and en-passant
+        target. Castling rights and move counters are emitted with neutral
+        placeholders until they are promoted to the position contract.
         """
         placement = self.numpy2fen(self.board)
         if not include_state:
             return placement
         active_color = 'w' if self.white_turn else 'b'
-        return f'{placement} {active_color} - - 0 1'
+        en_passant = self.en_passant_target or '-'
+        return f'{placement} {active_color} - {en_passant} 0 1'
 
     def reset_to_initial_position(self, preserve_history: bool = True) -> None:
         """Load the initial board and optionally keep the recorded move list."""
@@ -1327,10 +1396,9 @@ class ChessBoard:
         if not fen:
             raise ValueError('Requested move does not have an associated FEN')
 
-        self.board = self.fen2numpy(fen)
+        self.set_position_from_fen(fen, clear_history=False)
         self.white_turn = bool(white_turn)
-        self.possible_moves = self.calculate_possible_moves()
-        self._sync_bitboard()
+        self._refresh_possible_moves()
 
     def _resolve_pre_move_history_target(self, turn: int, white_player: bool) -> Tuple[Optional[str], bool]:
         moves, fens = self._split_history_entry(self.history[turn])
@@ -1388,6 +1456,8 @@ class ChessBoard:
 
         self.board = replay_board.board.copy()
         self.white_turn = replay_board.white_turn
+        self.last_turn = replay_board.last_turn
+        self.en_passant_target = replay_board.en_passant_target
         self.possible_moves = self.calculate_possible_moves()
         self._sync_bitboard()
 

@@ -434,3 +434,23 @@ def test_map_edge_label_style_distinguishes_move_color():
     assert TheoryMapCanvas._edge_label_style("white") == ("#111111", "#ffffff")
     assert TheoryMapCanvas._edge_label_style("black") == ("#ffffff", "#111111")
 
+
+
+def test_theory_controller_finds_existing_child_by_board_move_suffix(tmp_path: Path):
+    game_controller = GameController()
+    theory_controller = TheoryController.with_sqlite(
+        tmp_path / "theory.db",
+        game_controller=game_controller,
+    )
+    try:
+        book = theory_controller.create_book("Sufijos")
+        root = theory_controller.create_root_from_current_position(book.id, name="Base")
+        child = theory_controller.add_child_by_move(root.id, "e4", name="Peón rey")
+        theory_controller.select_node(root.id)
+
+        assert theory_controller.find_child_by_move("e4") == child
+        assert theory_controller.find_child_by_move("e4+") == child
+        assert theory_controller.find_child_by_move("e4#") == child
+        assert theory_controller.find_child_by_move("d4") is None
+    finally:
+        theory_controller.close()
